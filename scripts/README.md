@@ -266,6 +266,99 @@ python3 scripts/demo_storage.py
 
 ---
 
+### 6. CAD Generation Pipeline (`demo_cad_generator.py`)
+
+**Purpose**: End-to-end demo of Text → LLM → Parametric Spec → CadQuery → CAD files.
+
+```bash
+python3 scripts/demo_cad_generator.py
+```
+
+**User Input Required**: None (uses predefined examples for all 5 categories)
+
+**What It Does**:
+1. **Check Dependencies**: Verifies LLM server and CadQuery availability
+2. **Text → Param Spec**: LLM extracts parametric specs from text descriptions
+3. **Param Spec → CAD**: CadQuery generates STEP files and PNG renders
+4. **Summary**: Shows the complete pipeline flow
+
+**Expected Output**:
+```
+╭───────────────────────────────╮
+│ CAD Generation Pipeline Demo  │
+╰───────────────────────────────╯
+
+1. Checking Dependencies
+   ✓ LLM server available
+   ✓ CadQuery available (or ⚠ if not installed)
+
+2. Text → Parametric Specification (via LLM)
+
+   Flange
+   Input: A circular flange with base diameter 120mm...
+   Output: {"base_diameter": 120, "base_height": 15, ...}
+
+   Gear
+   Input: A spur gear with module 2.5, 24 teeth...
+   Output: {"module": 2.5, "num_teeth": 24, ...}
+
+   ... (all 5 categories)
+
+3. Parametric Specification → CAD (via CadQuery)
+
+┌──────────┬─────────┬────────────────────────┬──────────────┐
+│ Category │ Status  │ STEP File              │ Volume (mm³) │
+├──────────┼─────────┼────────────────────────┼──────────────┤
+│ Flange   │ SUCCESS │ flange_demo_iter0.step │ 45678.0      │
+│ Gear     │ SUCCESS │ gear_demo_iter0.step   │ 12345.0      │
+└──────────┴─────────┴────────────────────────┴──────────────┘
+
+4. Pipeline Summary
+   [ASCII diagram of the pipeline]
+
+✓ CAD generation demo complete!
+Generated files are in: artifacts/demo/
+```
+
+**Note**: If CadQuery is not installed, the demo will show expected file paths but won't generate actual files.
+
+---
+
+### 7. VLM Judge (`demo_vlm_judge.py`)
+
+**Purpose**: Test the VLM judge with actual CAD images from the dataset.
+
+```bash
+python3 scripts/demo_vlm_judge.py
+```
+
+**User Input Required**: None (uses images from LLM4CAD dataset)
+
+**What It Does**:
+1. Connects to Qwen3-VL on port 8002
+2. Loads sample images from the dataset
+3. Evaluates geometric accuracy, completeness, and quality
+4. Provides detailed scores and feedback
+
+**Expected Output**:
+```
+┌────────────────┬───────┬───────────┬────────┐
+│ Score Type     │ Value │ Threshold │ Status │
+├────────────────┼───────┼───────────┼────────┤
+│ Overall        │ 0.670 │ 0.80      │ FAIL   │
+│ Geometric      │ 0.700 │ 0.80      │ FAIL   │
+│ Completeness   │ 0.500 │ 0.80      │ FAIL   │
+│ Quality        │ 0.700 │ 0.80      │ FAIL   │
+└────────────────┴───────┴───────────┴────────┘
+
+Feedback: Verify the flange height and dimensions...
+Issues Found:
+  • The flange height appears shorter than specified
+  • No chamfers or threads visible
+```
+
+---
+
 ## Running Tests
 
 ```bash
