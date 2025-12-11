@@ -84,6 +84,26 @@ exit
 FINAL_SQSH="${SQSH_DIR}/vllm_mech_v1.sqsh"
 enroot export --output "${FINAL_SQSH}" vllm_mech
 
-echo "Final image written to: ${FINAL_SQSH}"
-echo "You can now start it with bash using the same RC script, for example:"
-echo "  enroot start --rc ${RC_SCRIPT} ${FINAL_SQSH} /bin/bash"
+# ===========================
+# 6) Start the container interactively with bash
+# ===========================
+RC_SCRIPT="${LOG_DIR}/enroot_rc.sh"
+cat > "${RC_SCRIPT}" << 'RCEOF'
+#!/bin/bash
+# Simple RC script: just exec the given command instead of the image entrypoint
+exec "$@"
+RCEOF
+chmod +x "${RC_SCRIPT}"
+
+export ENROOT_DATA_PATH="${SHARED_FS}/cache/.enroot/data/"
+mkdir -p "${ENROOT_DATA_PATH}"
+
+enroot start \
+  --root \
+  --rw \
+  --rc "${RC_SCRIPT}" \
+  --mount "${HOME}:${HOME}" \
+  --mount "${SHARED_FS}:${SHARED_FS}" \
+  --mount "${SHARED_FS2}:${SHARED_FS2}" \
+  vllm_mech \
+  /bin/bash
