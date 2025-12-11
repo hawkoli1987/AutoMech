@@ -271,36 +271,45 @@ python3 scripts/demo_storage.py
 **Purpose**: End-to-end demo of Text → LLM → Parametric Spec → CadQuery → CAD files.
 
 ```bash
+# Interactive mode (prompts for text description)
 python3 scripts/demo_cad_generator.py
+
+# Run with built-in examples for all 5 categories
+python3 scripts/demo_cad_generator.py --examples
+
+# Direct mode with custom text
+python3 scripts/demo_cad_generator.py --text "A spur gear with 20 teeth, module 3, face width 12mm"
+
+# Specify category explicitly
+python3 scripts/demo_cad_generator.py --text "..." --category Gear
 ```
 
-**User Input Required**: None (uses predefined examples for all 5 categories)
+**User Input**: 
+- **Interactive mode** (default): User enters component description
+- **--examples**: No input, uses predefined examples for all 5 categories
+- **--text**: Provide description directly on command line
 
 **What It Does**:
 1. **Check Dependencies**: Verifies LLM server and CadQuery availability
 2. **Text → Param Spec**: LLM extracts parametric specs from text descriptions
-3. **Param Spec → CAD**: CadQuery generates STEP files and PNG renders
-4. **Summary**: Shows the complete pipeline flow
+3. **Param Spec → CAD**: CadQuery generates STEP/STL files and PNG renders
+4. **Output Files**: Saves to `artifacts/demo/` or `artifacts/user_generated/`
 
-**Expected Output**:
+**Expected Output** (with --examples):
 ```
-╭───────────────────────────────╮
-│ CAD Generation Pipeline Demo  │
-╰───────────────────────────────╯
+╭──────────────────────────────╮
+│ CAD Generation Pipeline Demo │
+╰──────────────────────────────╯
 
-1. Checking Dependencies
-   ✓ LLM server available
-   ✓ CadQuery available (or ⚠ if not installed)
+✓ LLM server available
+✓ CadQuery available
+✓ LLM Model: Qwen/Qwen3-8B
 
-2. Text → Parametric Specification (via LLM)
+Processing: Flange
+Params: {"base_diameter": 120, "base_height": 15, ...}
 
-   Flange
-   Input: A circular flange with base diameter 120mm...
-   Output: {"base_diameter": 120, "base_height": 15, ...}
-
-   Gear
-   Input: A spur gear with module 2.5, 24 teeth...
-   Output: {"module": 2.5, "num_teeth": 24, ...}
+Processing: Gear
+Params: {"module": 2.5, "num_teeth": 24, ...}
 
    ... (all 5 categories)
 
@@ -320,7 +329,9 @@ python3 scripts/demo_cad_generator.py
 Generated files are in: artifacts/demo/
 ```
 
-**Note**: If CadQuery is not installed, the demo will show expected file paths but won't generate actual files.
+**Note**: CadQuery must be installed (`pip install cadquery`). Files are saved to:
+- `artifacts/demo/` for --examples mode
+- `artifacts/user_generated/` for interactive and --text modes
 
 ---
 
