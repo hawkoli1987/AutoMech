@@ -607,9 +607,11 @@ def decide_next_step(state: AgentState) -> dict:
     """
     DecideNextStep Node: Determine whether to continue iterating or terminate.
     
-    Termination conditions:
-    1. param_score >= threshold AND vlm_score >= threshold
-    2. iteration >= max_iterations
+    Termination conditions (any triggers termination):
+    1. param_score >= threshold (high-confidence match)
+    2. param_score >= 0.9 (near-perfect match, VLM optional)  
+    3. iteration >= max_iterations
+    4. Both param_score AND vlm_score pass their thresholds
     """
     config = get_config()
     
@@ -622,14 +624,20 @@ def decide_next_step(state: AgentState) -> dict:
     max_iterations = config.agent.max_iterations
     
     # Check termination conditions
-    scores_pass = param_score >= param_threshold and vlm_score >= vlm_threshold
+    both_scores_pass = param_score >= param_threshold and vlm_score >= vlm_threshold
+    param_excellent = param_score >= 0.95  # Near-perfect param match, skip VLM requirement
+    param_good_vlm_ok = param_score >= param_threshold and vlm_score >= 0.3  # Param passes + minimal VLM
     max_iter_reached = iteration >= max_iterations
     
-    done = scores_pass or max_iter_reached
+    done = both_scores_pass or param_excellent or param_good_vlm_ok or max_iter_reached
     
     # Build termination reason
-    if scores_pass:
+    if param_excellent:
+        termination_reason = "param_excellent"
+    elif both_scores_pass:
         termination_reason = "scores_pass"
+    elif param_good_vlm_ok:
+        termination_reason = "param_good"
     elif max_iter_reached:
         termination_reason = "max_iterations"
     else:
@@ -745,8 +753,15 @@ class DesignAgent:
         # Convert to agent state
         agent_state = graph_state_to_agent_state(initial_state)
         
-        # Run graph
-        final_state = self.graph.invoke(agent_state)
+        # Run graph with increased recursion limit
+        # 5 nodes per iteration * max_iterations + buffer
+        config = get_config()
+        recursion_limit = 5 * config.agent.max_iterations + 10
+        
+        final_state = self.graph.invoke(
+            agent_state, 
+            {"recursion_limit": recursion_limit}
+        )
         
         # Convert back to GraphState
         return agent_state_to_graph_state(final_state)

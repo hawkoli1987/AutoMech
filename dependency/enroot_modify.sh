@@ -61,6 +61,7 @@ apt-get install -y \
 
 # Python packages (include wandb and pandas as requested)
 pip3 install --no-cache-dir \
+    cadquery \
     ipython \
     jupyter \
     meshio \
