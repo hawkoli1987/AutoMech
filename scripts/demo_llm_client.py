@@ -84,8 +84,23 @@ Return only: {"outer_diameter": <float>, "inner_diameter": <float>, "thickness":
         console.print(f"   Result: {result}")
         console.print(f"   Type: {type(result).__name__}")
     except Exception as e:
-        console.print(f"   [yellow]Structured output error: {e}[/yellow]")
-        console.print("   Falling back to JSON extraction...")
+        error_msg = str(e)
+        if "Field required" in error_msg:
+            console.print(f"   [yellow]Structured output error: Schema mismatch[/yellow]")
+            console.print(f"   [dim]LLM returned JSON with different field names than expected[/dim]")
+        else:
+            console.print(f"   [yellow]Structured output error: {error_msg[:100]}...[/yellow]")
+        
+        # Try with explicit JSON instruction
+        console.print("   Retrying with explicit JSON-only prompt...")
+        json_prompt = '''Return ONLY a JSON object (no explanation) with these exact fields:
+{"outer_diameter": 120.0, "inner_diameter": 60.0, "thickness": 15.0, "num_holes": 6}
+Parse from: "A steel flange with 120mm outer diameter, 60mm inner bore, 15mm thick, with 6 bolt holes"'''
+        try:
+            raw_result = client.generate_json(json_prompt, max_tokens=100)
+            console.print(f"   Raw JSON: {raw_result}")
+        except Exception as e2:
+            console.print(f"   [dim]JSON extraction also failed - LLM returned prose instead of JSON[/dim]")
     
     # Chat with system prompt
     console.print("\n[bold]5. Chat with System Prompt[/bold]")
