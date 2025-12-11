@@ -31,9 +31,11 @@ class GenerationResult:
     """Result of CAD generation."""
     success: bool
     cad_file: Optional[str] = None
+    stl_file: Optional[str] = None
     render_image: Optional[str] = None
     error_message: Optional[str] = None
     volume: Optional[float] = None
+    bounding_box: Optional[dict] = None  # {"x": float, "y": float, "z": float}
     
     def to_cad_result(self) -> CADResult:
         """Convert to CADResult schema."""
@@ -327,6 +329,87 @@ GENERATORS = {
     CADCategory.SPRING: generate_spring,
 }
 
+# Parameter aliases for each category
+# Maps common LLM output names to expected function parameter names
+PARAM_ALIASES = {
+    CADCategory.FLANGE: {
+        # Aliases are keys, canonical names are values
+    },
+    CADCategory.GEAR: {
+        "num_teeth": "teeth_number",
+        "teeth": "teeth_number",
+        "tooth_count": "teeth_number",
+        "number_of_teeth": "teeth_number",
+        "face_width": "width",
+        "gear_width": "width",
+        "thickness": "width",
+        "bore_diameter": "bore_d",
+        "bore": "bore_d",
+        "inner_diameter": "bore_d",
+        "hole_diameter": "bore_d",
+    },
+    CADCategory.NUT: {
+        "size": "nut_size",
+        "across_flats": "nut_size",
+        "height": "nut_height",
+        "thread_diameter": "inner_diameter",
+        "thread_size": "inner_diameter",
+        "bore": "inner_diameter",
+    },
+    CADCategory.SHAFT: {},  # Shaft uses list format
+    CADCategory.SPRING: {
+        "wire_diameter": "wire_radius",  # Special: divide by 2
+        "wire_d": "wire_radius",
+        "coil_diameter": "radius",  # Special: divide by 2
+        "coil_d": "radius",
+        "mean_diameter": "radius",
+        "num_coils": "num_coils_count",  # Used for calculating pitch
+        "coils": "num_coils_count",
+        "number_of_coils": "num_coils_count",
+        "active_coils": "num_coils_count",
+        "free_length": "height",
+        "length": "height",
+    },
+}
+
+
+def normalize_params(category: CADCategory, params: dict) -> dict:
+    """
+    Normalize parameter names from LLM output to generator function names.
+    
+    Handles common variations in parameter naming from LLM responses.
+    """
+    aliases = PARAM_ALIASES.get(category, {})
+    normalized = {}
+    
+    for key, value in params.items():
+        # Check if this is an alias
+        canonical_key = aliases.get(key, key)
+        normalized[canonical_key] = value
+    
+    # Special handling for Spring parameters
+    if category == CADCategory.SPRING:
+        # Convert wire_diameter to wire_radius
+        if "wire_radius" in normalized and normalized["wire_radius"] > 5:
+            # If value is large, it's probably diameter not radius
+            normalized["wire_radius"] = normalized["wire_radius"] / 2
+        
+        # Convert coil_diameter to radius
+        if "radius" in normalized and normalized["radius"] > 10:
+            # If value is large, it's probably diameter not radius
+            normalized["radius"] = normalized["radius"] / 2
+        
+        # Calculate pitch from num_coils and height
+        if "num_coils_count" in normalized and "height" in normalized:
+            num_coils = normalized.pop("num_coils_count")
+            height = normalized["height"]
+            if num_coils > 0:
+                normalized["pitch"] = height / num_coils
+            else:
+                normalized["pitch"] = 10.0  # Default pitch
+    
+    return normalized
+
 
 def generate_cad_model(
     category: CADCategory | str,
@@ -359,7 +442,9 @@ def generate_cad_model(
         # Other categories take dict
         if not isinstance(params, dict):
             raise ValueError(f"{category.value} parameters must be a dict")
-        return generator(**params)
+        # Normalize parameter names
+        normalized = normalize_params(category, params)
+        return generator(**normalized)
 
 
 # =============================================================================
@@ -458,6 +543,22 @@ def get_model_volume(model: Any) -> float:
         return 0.0
 
 
+def get_model_bounding_box(model: Any) -> Optional[dict]:
+    """Get the bounding box of a CadQuery model in mm."""
+    try:
+        solid = model.val()
+        if hasattr(solid, 'BoundingBox'):
+            bb = solid.BoundingBox()
+            return {
+                "x": bb.xlen,
+                "y": bb.ylen,
+                "z": bb.zlen,
+            }
+        return None
+    except Exception:
+        return None
+
+
 # =============================================================================
 # High-Level Interface
 # =============================================================================
@@ -498,8 +599,9 @@ def generate_and_export(
         # Generate model
         model = generate_cad_model(category, params)
         
-        # Get volume
+        # Get volume and bounding box
         volume = get_model_volume(model)
+        bounding_box = get_model_bounding_box(model)
         
         # Set up paths
         output_path = Path(output_dir)
@@ -507,6 +609,7 @@ def generate_and_export(
         render_subdir = output_path / "renders"
         
         cad_file = None
+        stl_file = None
         render_image = None
         
         # Export STEP
@@ -521,6 +624,7 @@ def generate_and_export(
             stl_path = cad_subdir / f"{sample_id}_iter{iteration}.stl"
             from src.cad.generators import export_stl as _export_stl
             _export_stl(model, str(stl_path))
+            stl_file = str(stl_path)
         
         # Render PNG
         if render_png:
@@ -531,8 +635,10 @@ def generate_and_export(
         return GenerationResult(
             success=True,
             cad_file=cad_file,
+            stl_file=stl_file,
             render_image=render_image,
             volume=volume,
+            bounding_box=bounding_box,
         )
         
     except Exception as e:
