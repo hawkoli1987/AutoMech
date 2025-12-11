@@ -1,0 +1,21 @@
+{
+  "exclude": [
+    "**/cache",
+    "**/env",
+    "**/repos",
+    "**/log",
+    "**/data_yuli",
+    "**/sqsh",
+    "**/wandb",
+    "**/.git",
+    "**/__pycache__",
+    "**/ckpt_*",
+    "**/data",
+    "**/inference/output",
+  ],
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false,
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic"
+}
+

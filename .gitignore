@@ -1,0 +1,13 @@
+# Python cache
+__pycache__/
+**/__pycache__/
+
+
+doc
+env
+inference
+log
+repos
+data
+.cursorignore
+.cursor

@@ -1,0 +1,107 @@
+# Agentic CAD Framework Configuration
+# Default configuration file
+
+# =============================================================================
+# LLM Configuration
+# =============================================================================
+llm:
+  # Base URL for OpenAI-compatible API (vLLM server)
+  api_base: "${OPENAI_API_BASE:http://localhost:8001}"
+  api_key: "${OPENAI_API_KEY:dummy}"
+  
+  # Model settings (auto-detected from /v1/models if not specified)
+  model: null  # e.g., "Qwen/Qwen3-8B"
+  
+  # Generation parameters
+  temperature: 0.7
+  max_tokens: 2048
+  
+  # Qwen3 specific
+  enable_thinking: false
+  
+  # Retry settings
+  max_retries: 3
+  timeout: 60
+
+# =============================================================================
+# VLM Configuration (for visual judging)
+# =============================================================================
+vlm:
+  api_base: "${OPENAI_API_BASE:http://localhost:8001}"
+  api_key: "${OPENAI_API_KEY:dummy}"
+  model: null  # e.g., "Qwen/Qwen3-VL"
+  temperature: 0.3
+  max_tokens: 1024
+
+# =============================================================================
+# Agent Configuration
+# =============================================================================
+agent:
+  # Termination thresholds
+  param_score_threshold: 0.85
+  vlm_score_threshold: 0.80
+  
+  # Max iterations before forced termination
+  max_iterations: 5
+  
+  # Enable/disable nodes
+  enable_vlm_judge: true
+  enable_param_judge: true
+
+# =============================================================================
+# Data Configuration
+# =============================================================================
+data:
+  # LLM4CAD dataset path
+  llm4cad_path: "data/LLM4CAD"
+  
+  # Categories to process (null = all)
+  categories: null  # ["Flange", "Gear", "Nut", "Shaft", "Spring"]
+  
+  # Sample limits for testing
+  max_samples_per_category: null  # null = all samples
+  
+  # Shuffle samples
+  shuffle: false
+  random_seed: 42
+
+# =============================================================================
+# CAD Generation Configuration
+# =============================================================================
+cad:
+  # Output format
+  output_format: "step"  # "step" or "stl"
+  
+  # Rendering settings
+  render_resolution: [800, 600]
+  render_background: "white"
+  
+  # Execution timeout (seconds)
+  execution_timeout: 30
+
+# =============================================================================
+# Storage Configuration
+# =============================================================================
+storage:
+  # SQLite database path
+  db_path: "db/process.sqlite"
+  
+  # Artifact directories
+  artifacts_dir: "artifacts"
+  cad_dir: "artifacts/cad"
+  images_dir: "artifacts/images"
+  renders_dir: "artifacts/renders"
+  
+  # Enable WandB logging
+  wandb_enabled: false
+  wandb_project: "agentic-cad"
+  wandb_entity: null
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  format: "rich"  # "rich" or "plain"
+  log_file: null  # Path to log file (null = stdout only)
+
