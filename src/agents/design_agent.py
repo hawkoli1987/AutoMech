@@ -400,28 +400,54 @@ def generate_cad(state: AgentState) -> dict:
     """
     GenerateCAD Node: Generate CAD model from parameters.
     
-    This is a placeholder that will be implemented in Step 1.5.
-    For now, it returns stub paths.
+    Uses CadQuery to generate STEP file and render PNG.
+    Falls back to stub paths if CadQuery is not available.
     """
+    from src.cad.generators import generate_and_export, is_cadquery_available
+    
     sample_id = state["sample_id"]
     category = state["category"]
     run_id = state["run_id"] or "default"
     iteration = state["iteration"]
+    pred_param_spec = state.get("pred_param_spec")
     
-    # Stub implementation - will be replaced with actual CAD generation
-    # For now, check if STL exists and use it as reference
-    stl_path = state.get("stl_path")
+    config = get_config()
+    output_dir = f"{config.storage.artifacts_dir}/{run_id}"
     
-    # Placeholder paths
-    cad_file = f"artifacts/cad/{run_id}/{sample_id}_iter{iteration}.step"
-    render_image = f"artifacts/renders/{run_id}/{sample_id}_iter{iteration}.png"
+    # Check if we have predicted parameters
+    if not pred_param_spec:
+        return {
+            "cad_file": None,
+            "render_image": None,
+        }
     
-    # TODO: Actual CAD generation will be implemented in Step 1.5
-    # For now, return the paths (files won't exist yet)
+    # Check if CadQuery is available
+    if not is_cadquery_available():
+        # Return stub paths when CadQuery not available
+        cad_file = f"{output_dir}/cad/{sample_id}_iter{iteration}.step"
+        render_image = f"{output_dir}/renders/{sample_id}_iter{iteration}.png"
+        return {
+            "cad_file": cad_file,
+            "render_image": render_image,
+        }
+    
+    # Generate CAD model
+    result = generate_and_export(
+        category=category,
+        params=pred_param_spec,
+        output_dir=output_dir,
+        sample_id=sample_id,
+        iteration=iteration,
+        export_step=True,
+        render_png=True,
+    )
+    
+    if not result.success:
+        print(f"[GenerateCAD] Failed: {result.error_message}")
     
     return {
-        "cad_file": cad_file,
-        "render_image": render_image,
+        "cad_file": result.cad_file,
+        "render_image": result.render_image,
     }
 
 
