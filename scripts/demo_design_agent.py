@@ -159,16 +159,14 @@ def main():
         
         # Generate parameters from text description
         text_desc = "A flange with outer diameter 120mm, inner diameter 60mm, and height 15mm"
-        schema = FlangeSpec.model_json_schema()
         
-        prompt = f"""Extract the parametric specification from this description as JSON.
+        # Use simple example-based prompt instead of schema (clearer for LLM)
+        prompt = f"""Extract dimensions from this description and return as JSON.
 
 Description: {text_desc}
 
-Expected JSON format matching this schema:
-{json.dumps(schema, indent=2)}
-
-Output only valid JSON, no explanation."""
+Return ONLY a JSON object like this example (no explanation):
+{{"outer_diameter": 100.0, "inner_diameter": 50.0, "height": 10.0}}"""
 
         console.print(f"\n   Input text: '{text_desc}'")
         console.print(f"   Generating parameters...")
