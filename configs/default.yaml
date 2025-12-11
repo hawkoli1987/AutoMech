@@ -27,9 +27,9 @@ llm:
 # VLM Configuration (for visual judging)
 # =============================================================================
 vlm:
-  api_base: "${OPENAI_API_BASE:http://localhost:8001}"
+  api_base: "${OPENAI_API_BASE2:http://localhost:8002}"
   api_key: "${OPENAI_API_KEY:dummy}"
-  model: null  # e.g., "Qwen/Qwen3-VL"
+  model: "Qwen/Qwen3-VL-8B-Instruct"  # VLM on port 8002
   temperature: 0.3
   max_tokens: 1024
 

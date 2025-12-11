@@ -289,6 +289,114 @@ class TestLLMClientLive:
         assert response.result == 15
 
 
+def is_vlm_server_available():
+    """Check if VLM server is available on port 8002."""
+    import requests
+    api_base = os.getenv("OPENAI_API_BASE2", "http://localhost:8002")
+    try:
+        response = requests.get(f"{api_base}/v1/models", timeout=2)
+        return response.status_code == 200
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(not is_vlm_server_available(), reason="VLM server not available")
+class TestVLMClientLive:
+    """Live tests for VLM client requiring running Qwen3-VL server."""
+    
+    @pytest.fixture
+    def sample_image_path(self):
+        """Get a sample image from the LLM4CAD dataset."""
+        import glob
+        data_root = "/scratch/Projects/SPEC-SF-AISG/source_files/AutoMech/data/LLM4CAD"
+        images = glob.glob(f"{data_root}/**/img/*.png", recursive=True)
+        if not images:
+            pytest.skip("No sample images found in LLM4CAD dataset")
+        return images[0]
+    
+    def test_vlm_model_detection(self):
+        """Test VLM auto-detects model from server."""
+        from src.utils.llm_client import VLMClient
+        
+        client = VLMClient(
+            api_base=os.getenv("OPENAI_API_BASE2", "http://localhost:8002")
+        )
+        assert client.model is not None
+        assert "VL" in client.model or "vl" in client.model.lower()
+        print(f"Detected VLM model: {client.model}")
+    
+    def test_vlm_simple_image_description(self, sample_image_path):
+        """Test VLM can describe an image."""
+        from src.utils.llm_client import VLMClient
+        
+        client = VLMClient(
+            api_base=os.getenv("OPENAI_API_BASE2", "http://localhost:8002")
+        )
+        
+        response = client.generate_with_image(
+            prompt="What type of mechanical part is shown in this image? Answer in one sentence.",
+            image_path=sample_image_path,
+            max_tokens=100,
+        )
+        
+        assert response is not None
+        assert len(response) > 10
+        print(f"VLM response: {response}")
+    
+    def test_vlm_json_with_image(self, sample_image_path):
+        """Test VLM can return structured JSON for an image."""
+        from src.utils.llm_client import VLMClient
+        
+        client = VLMClient(
+            api_base=os.getenv("OPENAI_API_BASE2", "http://localhost:8002")
+        )
+        
+        result = client.generate_json_with_image(
+            prompt=(
+                "Analyze this mechanical part image. "
+                "Return a JSON object with: "
+                '{"part_type": "string", "description": "string", "quality_score": 0.0 to 1.0}. '
+                "Only output valid JSON."
+            ),
+            image_path=sample_image_path,
+            max_tokens=200,
+        )
+        
+        assert isinstance(result, dict)
+        assert "part_type" in result or "description" in result
+        print(f"VLM JSON response: {result}")
+    
+    def test_vlm_cad_quality_evaluation(self, sample_image_path):
+        """Test VLM for CAD quality evaluation (simulating VLM judge)."""
+        from src.utils.llm_client import VLMClient
+        
+        class CADEvaluation(BaseModel):
+            visual_quality: float = Field(..., ge=0.0, le=1.0, description="Visual quality score")
+            geometry_correctness: float = Field(..., ge=0.0, le=1.0, description="Geometry correctness score")
+            feedback: str = Field(..., description="Feedback on the CAD render")
+        
+        client = VLMClient(
+            api_base=os.getenv("OPENAI_API_BASE2", "http://localhost:8002")
+        )
+        
+        # Since VLM might not support structured output directly, test JSON generation
+        result = client.generate_json_with_image(
+            prompt=(
+                "Evaluate this CAD render of a mechanical part. "
+                "Return a JSON object with: "
+                '{"visual_quality": 0.0-1.0, "geometry_correctness": 0.0-1.0, "feedback": "string"}. '
+                "Only output valid JSON."
+            ),
+            image_path=sample_image_path,
+            max_tokens=300,
+        )
+        
+        assert isinstance(result, dict)
+        if "visual_quality" in result:
+            assert 0 <= result["visual_quality"] <= 1
+        print(f"CAD Evaluation: {result}")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

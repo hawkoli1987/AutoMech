@@ -18,7 +18,8 @@ def utcnow() -> datetime:
     """Get current UTC time as naive datetime (for SQLite compatibility)."""
     # Using naive datetime for SQLite compatibility
     # SQLite doesn't natively support timezone-aware datetimes
-    return datetime.utcnow()  # noqa: DTZ003
+    from datetime import timezone
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 from sqlalchemy import (
     create_engine,
