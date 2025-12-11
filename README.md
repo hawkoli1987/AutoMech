@@ -13,6 +13,12 @@
 - **数据/基准**：LLM4CAD, CAD-Llama datasets  
 - **环境**：CadQuery, FreeCAD
 
+### 3. CAD/FEA Tool-Use
+
+- **模型**：CAD-Assistant / LLM4CAD 风格 pipeline  
+- **数据**：上述 CAD 任务集  
+- **环境**：FreeCAD / CadQuery + FEA solver，封装成 Tool-Server
+
 ---
 
 ### 3. 几何 / 干涉推理
@@ -39,11 +45,7 @@
 
 ---
 
-### 6. CAD/FEA Tool-Use
 
-- **模型**：CAD-Assistant / LLM4CAD 风格 pipeline  
-- **数据**：上述 CAD 任务集  
-- **环境**：FreeCAD / CadQuery + FEA solver，封装成 Tool-Server
 
 ---
 

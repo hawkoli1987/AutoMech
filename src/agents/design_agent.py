@@ -222,29 +222,69 @@ Predicted:
 
 Analyze each parameter and provide scores. Output only JSON."""
 
-JUDGE_VLM_SYSTEM = """You are a CAD visual quality judge. Evaluate if the rendered 3D model matches the specification and description.
+JUDGE_VLM_SYSTEM = """You are an expert CAD visual quality judge specializing in mechanical parts evaluation.
 
-Output valid JSON with this structure:
+Evaluate rendered CAD models for geometric accuracy and visual quality. Be precise and critical.
+
+Output valid JSON with this exact structure:
 {{
-    "overall_score": <float 0-1>,
-    "geometric_score": <float 0-1>,
-    "completeness_score": <float 0-1>,
-    "quality_score": <float 0-1>,
-    "feedback": "<visual issues observed>"
+    "overall_score": <float 0.0-1.0>,
+    "geometric_score": <float 0.0-1.0>,
+    "completeness_score": <float 0.0-1.0>,
+    "quality_score": <float 0.0-1.0>,
+    "issues": ["<list of specific issues found>"],
+    "feedback": "<actionable improvement suggestions>"
 }}
 
-Scoring:
-- geometric_score: Does the geometry match the parameters?
-- completeness_score: Are all expected features present?
-- quality_score: Is the model well-formed without artifacts?"""
+Scoring criteria:
+- geometric_score (0.0-1.0): Does the visible geometry match the specified parameters?
+  * 1.0 = Perfect match to dimensions
+  * 0.7-0.9 = Minor proportional differences
+  * 0.4-0.6 = Noticeable dimensional errors
+  * 0.0-0.3 = Major geometric issues
 
-JUDGE_VLM_USER = """Evaluate this rendered CAD model against the specification:
+- completeness_score (0.0-1.0): Are all expected features present?
+  * 1.0 = All features present (holes, chamfers, fillets, etc.)
+  * 0.5 = Some features missing
+  * 0.0 = Major features missing
 
-Category: {category}
-Parameters: {pred_spec}
-Original Description: {text_desc}
+- quality_score (0.0-1.0): Is the render/model well-formed?
+  * 1.0 = Clean geometry, proper rendering
+  * 0.5 = Minor artifacts or rendering issues
+  * 0.0 = Major defects, unmanufacturable geometry
 
-Score the visual quality and geometric accuracy. Output only JSON."""
+overall_score = (geometric_score + completeness_score + quality_score) / 3"""
+
+JUDGE_VLM_USER = """Evaluate this rendered CAD model of a {category}:
+
+Specified Parameters:
+{pred_spec}
+
+Original Text Description:
+"{text_desc}"
+
+Carefully examine the image and score:
+1. Does the geometry match the specified dimensions?
+2. Are all features (holes, threads, chamfers, etc.) present?
+3. Is the model well-formed and manufacturable?
+
+Output only valid JSON matching the required format."""
+
+JUDGE_VLM_COMPARISON_USER = """Compare these two CAD renders:
+
+LEFT IMAGE: Ground truth reference
+RIGHT IMAGE: Generated model to evaluate
+
+Target Category: {category}
+Target Parameters: {pred_spec}
+Description: "{text_desc}"
+
+Score how well the generated model (right) matches the reference (left):
+1. geometric_score: Do dimensions and proportions match?
+2. completeness_score: Are all features present as in reference?
+3. quality_score: Is the generated model well-formed?
+
+Output only valid JSON matching the required format."""
 
 
 # =============================================================================
@@ -268,14 +308,30 @@ def generate_param_spec(state: AgentState) -> dict:
     schema = CATEGORY_PARAM_SCHEMAS.get(category, {})
     schema_str = json.dumps(schema, indent=2)
     
-    # Add feedback from previous iteration if available
+    # Add feedback from previous iteration if available (both param and VLM feedback)
     feedback_section = ""
-    if iteration > 0 and state["param_feedback"]:
-        feedback_section = f"""
-Previous attempt feedback (iteration {iteration}):
-{state["param_feedback"]}
+    if iteration > 0:
+        feedback_parts = []
+        
+        # Add parameter judge feedback
+        if state.get("param_feedback"):
+            feedback_parts.append(f"Parameter Judge Feedback:\n{state['param_feedback']}")
+        
+        # Add VLM visual feedback
+        if state.get("vlm_feedback"):
+            feedback_parts.append(f"Visual Quality Feedback:\n{state['vlm_feedback']}")
+        
+        # Add previous prediction for reference
+        if state.get("pred_param_spec"):
+            prev_pred = json.dumps(state["pred_param_spec"], indent=2)
+            feedback_parts.append(f"Previous Prediction (to improve upon):\n{prev_pred}")
+        
+        if feedback_parts:
+            feedback_section = f"""
+=== ITERATION {iteration} - IMPROVEMENT REQUIRED ===
+{chr(10).join(feedback_parts)}
 
-Please address this feedback and improve your prediction.
+IMPORTANT: Carefully address ALL the feedback above and generate improved parameters.
 """
     
     # Build prompt
@@ -455,14 +511,15 @@ def judge_cad_vlm(state: AgentState) -> dict:
     """
     JudgeCAD_VLM Node: Evaluate rendered CAD model visually.
     
-    Uses VLM to assess geometric and visual quality.
+    Uses VLM (Qwen3-VL) to assess geometric and visual quality.
+    Provides detailed scoring breakdown and actionable feedback.
     """
     config = get_config()
     
     # Check if VLM judging is enabled
     if not config.agent.enable_vlm_judge:
         return {
-            "vlm_score": 1.0,  # Skip VLM, assume pass
+            "vlm_score": 1.0,
             "vlm_feedback": "VLM judging disabled.",
         }
     
@@ -471,7 +528,6 @@ def judge_cad_vlm(state: AgentState) -> dict:
     # Check if render exists
     from pathlib import Path
     if not render_image or not Path(render_image).exists():
-        # No render available - skip VLM or return neutral score
         return {
             "vlm_score": 0.5,
             "vlm_feedback": "No render image available for VLM evaluation.",
@@ -480,34 +536,70 @@ def judge_cad_vlm(state: AgentState) -> dict:
     try:
         vlm_client = get_vlm_client()
         
+        # Format predicted parameters
+        pred_spec = state.get("pred_param_spec", {})
+        if isinstance(pred_spec, dict):
+            pred_spec_str = json.dumps(pred_spec, indent=2)
+        else:
+            pred_spec_str = str(pred_spec)
+        
+        # Build prompt
         prompt = JUDGE_VLM_USER.format(
             category=state["category"],
-            pred_spec=json.dumps(state.get("pred_param_spec", {}), indent=2),
+            pred_spec=pred_spec_str,
             text_desc=state["text_desc"],
         )
         
+        # Call VLM for evaluation
         result = vlm_client.generate_json_with_image(
             prompt=prompt,
             image_path=render_image,
             system_prompt=JUDGE_VLM_SYSTEM,
             temperature=0.2,
-            max_tokens=512,
+            max_tokens=600,
         )
         
-        overall_score = float(result.get("overall_score", 0.5))
-        feedback = result.get("feedback", "")
+        # Extract scores with defaults
+        geometric_score = float(result.get("geometric_score", 0.5))
+        completeness_score = float(result.get("completeness_score", 0.5))
+        quality_score = float(result.get("quality_score", 0.5))
         
-        # Clamp score
+        # Calculate overall score (average of components)
+        if "overall_score" in result:
+            overall_score = float(result["overall_score"])
+        else:
+            overall_score = (geometric_score + completeness_score + quality_score) / 3
+        
+        # Clamp all scores to [0, 1]
         overall_score = max(0.0, min(1.0, overall_score))
+        geometric_score = max(0.0, min(1.0, geometric_score))
+        completeness_score = max(0.0, min(1.0, completeness_score))
+        quality_score = max(0.0, min(1.0, quality_score))
+        
+        # Extract feedback and issues
+        feedback = result.get("feedback", "")
+        issues = result.get("issues", [])
+        if issues and isinstance(issues, list):
+            issues_str = "; ".join(issues)
+            feedback = f"{feedback} Issues: {issues_str}" if feedback else issues_str
         
     except Exception as e:
-        # VLM failed - use neutral score
+        # VLM evaluation failed - use neutral scores
         overall_score = 0.5
-        feedback = f"VLM evaluation failed: {e}"
+        geometric_score = 0.5
+        completeness_score = 0.5
+        quality_score = 0.5
+        feedback = f"VLM evaluation failed: {str(e)[:200]}"
     
     return {
         "vlm_score": overall_score,
         "vlm_feedback": feedback,
+        # Store detailed scores in history for analysis
+        "_vlm_details": {
+            "geometric_score": geometric_score,
+            "completeness_score": completeness_score,
+            "quality_score": quality_score,
+        },
     }
 
 
@@ -535,7 +627,15 @@ def decide_next_step(state: AgentState) -> dict:
     
     done = scores_pass or max_iter_reached
     
-    # Save current iteration to history
+    # Build termination reason
+    if scores_pass:
+        termination_reason = "scores_pass"
+    elif max_iter_reached:
+        termination_reason = "max_iterations"
+    else:
+        termination_reason = None
+    
+    # Save current iteration to history with detailed scores
     history_entry = {
         "iteration": iteration,
         "param_score": param_score,
@@ -543,15 +643,27 @@ def decide_next_step(state: AgentState) -> dict:
         "pred_param_spec": state.get("pred_param_spec"),
         "param_feedback": state.get("param_feedback"),
         "vlm_feedback": state.get("vlm_feedback"),
+        "cad_file": state.get("cad_file"),
+        "render_image": state.get("render_image"),
     }
+    
+    # Add VLM detail scores if available
+    vlm_details = state.get("_vlm_details")
+    if vlm_details:
+        history_entry["vlm_details"] = vlm_details
     
     new_history = state.get("iteration_history", []).copy()
     new_history.append(history_entry)
+    
+    # Log iteration summary
+    status = "PASS" if done else "CONTINUE"
+    print(f"[DecideNextStep] Iter {iteration}: param={param_score:.3f}, vlm={vlm_score:.3f} → {status}")
     
     return {
         "done": done,
         "iteration": iteration + 1,
         "iteration_history": new_history,
+        "_termination_reason": termination_reason,
     }
 
 
