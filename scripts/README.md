@@ -266,40 +266,6 @@ python3 scripts/demo_storage.py
 
 ---
 
-## Understanding Errors
-
-### "Structured output error: Field required"
-
-```
-Structured output error: 3 validation errors for FlangeParams
-outer_diameter
-  Field required
-inner_diameter
-  Field required
-thickness
-  Field required
-```
-
-**What This Means**:
-The LLM returned JSON, but with different field names than the Pydantic schema expected.
-
-**Example**:
-- Schema expects: `{"outer_diameter": 100, "inner_diameter": 50, "thickness": 10}`
-- LLM returned: `{"diameter": 100, "bore": 50, "height": 10}` or nested like `{"flange": {"diameter": 100}}`
-
-**Why It Happens**:
-- The LLM doesn't always follow the exact schema field names
-- Qwen3-8B may use synonyms or different naming conventions
-- The prompt may need to be more explicit about exact field names
-
-**How It's Handled**:
-The demo catches this error and falls back to raw JSON extraction. In production, you would:
-1. Retry with a clearer prompt
-2. Add field name mapping
-3. Use few-shot examples in the prompt
-
----
-
 ## Running Tests
 
 ```bash

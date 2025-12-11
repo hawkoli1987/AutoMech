@@ -63,8 +63,8 @@ def main():
         db.log_node_execution(
             run_id=run1.id,
             node_name="generate_param_spec",
-            input_data={"text_desc": "A steel flange..."},
-            output_data={"outer_diameter": 100, "inner_diameter": 50},
+            input_state={"text_desc": "A steel flange..."},
+            output_delta={"pred_param_spec": {"outer_diameter": 100, "inner_diameter": 50}},
             duration_ms=1523,
             success=True,
         )
@@ -73,8 +73,8 @@ def main():
         db.log_node_execution(
             run_id=run1.id,
             node_name="judge_param_spec",
-            input_data={"pred": {"outer_diameter": 100}},
-            output_data={"score": 0.95, "feedback": "Excellent match"},
+            input_state={"pred_param_spec": {"outer_diameter": 100}},
+            output_delta={"param_score": 0.95, "param_feedback": "Excellent match"},
             duration_ms=892,
             success=True,
         )
@@ -126,7 +126,7 @@ def main():
         table.add_row("Total Samples", str(stats["total_samples"]))
         table.add_row("Total Runs", str(stats["total_runs"]))
         table.add_row("Successful Runs", str(stats["successful_runs"]))
-        table.add_row("Total Node Executions", str(stats["total_node_executions"]))
+        table.add_row("Total Node Executions", str(stats["total_nodes"]))
         table.add_row("Total Artifacts", str(stats["total_artifacts"]))
         
         console.print(table)
