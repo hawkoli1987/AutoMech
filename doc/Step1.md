@@ -283,7 +283,7 @@ agentic-cad-framework/
 - [x] WandB integration for experiment tracking (optional)
 - [x] Checkpoint/resume capability with JSON-based checkpoints
 
-### Phase 2: VLM Integration & Refinement 🔄 IN PROGRESS
+### Phase 2: VLM Integration & Refinement ✅ COMPLETED
 
 #### Step 2.1: VLM Judge ✅
 - [x] Integrate Qwen3-VL for multimodal evaluation (port 8002)
@@ -291,9 +291,11 @@ agentic-cad-framework/
   - Enhanced system prompt with detailed scoring criteria
   - Structured JSON output with geometric, completeness, quality scores
   - Actionable feedback and issues list
-- [x] Calibrate score thresholds (tuning in progress)
-  - Current thresholds: param_score > 0.85, vlm_score > 0.8
-  - Observed average VLM scores: ~0.58 on LLM4CAD images
+- [x] Calibrate score thresholds
+  - Calibration script: `scripts/calibrate_thresholds.py`
+  - param_score_threshold: 0.85 (heuristic judge achieves ~1.0 on matching specs)
+  - vlm_score_threshold: 0.50 (VLM scores vary 0.5-0.7 on dataset images)
+  - Observed: param_score = 1.0 (perfect match), VLM scores = 0.5-0.7
 
 #### Step 2.2: Iterative Refinement ✅
 - [x] Implement feedback-driven re-generation in GenerateParamSpec
@@ -302,7 +304,10 @@ agentic-cad-framework/
 - [x] Add iteration history to GraphState
   - Tracks all scores, predictions, and feedback per iteration
   - Includes VLM detail scores (geometric, completeness, quality)
-- [ ] Fine-tune termination criteria (pending end-to-end testing)
+- [x] Fine-tune termination criteria
+  - Multiple termination conditions: param_excellent (>=0.95), param_good_vlm_ok, both_pass, max_iter
+  - Increased LangGraph recursion limit dynamically (5 nodes * max_iterations + buffer)
+  - Agent now terminates in 1 iteration when param_score is near-perfect
 
 ### Phase 3: FEA Agent (Subgraph)
 
