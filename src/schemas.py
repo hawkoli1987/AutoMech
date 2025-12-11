@@ -126,7 +126,7 @@ class GraphState(BaseModel):
     """
     # Input fields
     text_desc: str = Field(..., description="Natural language description of the part")
-    gt_param_spec: dict = Field(..., description="Ground truth parametric specification")
+    gt_param_spec: dict | list = Field(..., description="Ground truth parametric specification (dict or list for Shaft)")
     
     # Generated fields
     pred_param_spec: Optional[dict] = Field(None, description="Predicted parametric specification")
@@ -163,7 +163,7 @@ class LLM4CADSample(BaseModel):
     sample_id: str = Field(..., description="Unique identifier (e.g., 'flange_00001')")
     category: CADCategory = Field(..., description="Part category")
     text_desc: str = Field(..., description="Human language description")
-    gt_param_spec: dict = Field(..., description="Ground truth parameters from JSON")
+    gt_param_spec: dict | list = Field(..., description="Ground truth parameters from JSON (dict or list for Shaft)")
     stl_path: str = Field(..., description="Path to STL mesh file")
     
     def to_graph_state(self, run_id: Optional[str] = None) -> GraphState:
