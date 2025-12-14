@@ -1,0 +1,119 @@
+#!/bin/bash
+#PBS -N mech_server
+#PBS -o /dev/null
+#PBS -e /dev/null
+#PBS -q AISG_debug
+#PBS -l select=1:mem=1000gb:ngpus=2:ncpus=100:host=hopper-45
+#PBS -l walltime=24:00:00
+
+set -e
+
+export SHARED_FS="/scratch/Projects/SPEC-SF-AISG"
+export CONTAINER_NAME="yuli_vllm2"
+export SQSH_DIR="${SHARED_FS}/sqsh"
+export IMG_NAME="vllm-openai"
+export LOCAL_IMG2="${SQSH_DIR}/${IMG_NAME}-v0.11.2.sqsh"
+export SQSH_FILE=$LOCAL_IMG2
+
+export CACHE_ROOT="${SHARED_FS}/cache"
+export HF_HOME="${SHARED_FS}/cache/huggingface_tmp" # defaults to non_tmp
+export VLLM_CACHE_ROOT="$CACHE_ROOT/vllm_cache"
+export TORCH_HOME="$CACHE_ROOT/torch_cache"
+export TORCH_KERNEL_CACHE_PATH="$CACHE_ROOT/torch_cache/kernels"
+export TRITON_CACHE_DIR="$CACHE_ROOT/triton_cache"
+export XDG_CACHE_HOME="$CACHE_ROOT/xdg_cache"
+export CUDA_CACHE_PATH="$CACHE_ROOT/cuda_cache"
+
+export LOG_DIR="${SHARED_FS}/log/mech/server/${PBS_JOBID}"
+mkdir -p "${LOG_DIR}"
+
+exec > >(tee -a "${LOG_DIR}/pbs.log") 2>&1
+
+# Set enroot data directory to shared filesystem to avoid home directory space issues
+export ENROOT_DATA_PATH="${SHARED_FS}/.enroot/data"
+mkdir -p "${ENROOT_DATA_PATH}"
+
+# Create container if it doesn't exist
+if ! enroot list | grep -q "${CONTAINER_NAME}"; then
+    enroot create -n "${CONTAINER_NAME}" "${SQSH_FILE}"
+fi
+
+# Set up cache directories on shared filesystem to avoid disk space issues
+mkdir -p "${HF_HOME}" "${VLLM_CACHE_ROOT}" "${TORCH_HOME}/kernels" "${TRITON_CACHE_DIR}" "${XDG_CACHE_HOME}" "${CUDA_CACHE_PATH}"
+
+# Set CUDA_VISIBLE_DEVICES to numeric indices to fix vLLM UUID issue
+if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+    num_gpus=$(nvidia-smi -L | wc -l)
+    export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((num_gpus - 1)))
+fi
+
+# Build enroot --env arguments: pass all variables matching prefixes
+env_args=""
+prefixes=("NCCL" "CUDA" "SHARED" "HF" "WANDB" "XDG" "LOG" "CACHE" "TORCH" "TRITON" "VLLM")
+
+for prefix in "${prefixes[@]}"; do
+    while IFS= read -r var; do
+        if [ -n "${!var}" ]; then
+            env_args="${env_args} --env=${var}=${!var}"
+        fi
+    done < <(env | grep "^${prefix}_" | cut -d'=' -f1)
+done
+
+# print all values of env_args
+echo "env_args: ${env_args}"
+
+
+# launch both models in the same job
+# reset the CUDA_VISIBLE_DEVICES in env_args to 0, by first removing the existing CUDA_VISIBLE_DEVICES
+env_args=$(echo "${env_args}" | sed 's/--env=CUDA_VISIBLE_DEVICES=[^ ]*//g')
+env_args="${env_args} --env=CUDA_VISIBLE_DEVICES=0"
+MODEL_NAME="Qwen/Qwen3-8B" 
+enroot start --root --rw \
+    --mount="${HOME}:${HOME}" \
+    --mount="${SHARED_FS}:${SHARED_FS}" \
+    ${env_args} \
+    yuli_vllm2 \
+    --model ${MODEL_NAME} \
+    --dtype bfloat16 \
+    --gpu-memory-utilization 0.95 \
+    --port 8001 \
+    --max-model-len 32768 \
+    --max-num-seqs 30 \
+    --max-num-batched-tokens 32768 \
+    --enable-chunked-prefill \
+    --enable-prefix-caching \
+    --trust-remote-code 2>&1 | tee -a "${LOG_DIR}/llm.log" &
+
+# Qwen3-VL Single-GPU (BF16, 32k context, image-only)
+# reset the CUDA_VISIBLE_DEVICES in env_args to 0, by first removing the existing CUDA_VISIBLE_DEVICES
+env_args=$(echo "${env_args}" | sed 's/--env=CUDA_VISIBLE_DEVICES=[^ ]*//g')
+env_args="${env_args} --env=CUDA_VISIBLE_DEVICES=1"
+MODEL_NAME="Qwen/Qwen3-VL-8B-Instruct" 
+OMP_NUM_THREADS=1 \
+enroot start --root --rw \
+    --mount="${HOME}:${HOME}" \
+    --mount="${SHARED_FS}:${SHARED_FS}" \
+    ${env_args} \
+    yuli_vllm2 \
+    --model ${MODEL_NAME} \
+    --dtype bfloat16 \
+    --gpu-memory-utilization 0.95 \
+    --port 8002 \
+    --max-model-len 32768 \
+    --max-num-seqs 8 \
+    --max-num-batched-tokens 16384 \
+    --enable-chunked-prefill \
+    --enable-prefix-caching \
+    --limit-mm-per-prompt.video 0 \
+    --async-scheduling \
+    --trust-remote-code 2>&1 | tee -a "${LOG_DIR}/vlm.log" &
+
+# Note: SSH reverse tunnels don't work between compute nodes on this HPC.
+# Clients should connect directly using the server hostname.
+# Example: export OPENAI_API_BASE=http://$(hostname):8001
+
+echo "Servers running on $(hostname):8001 and $(hostname):8002"
+echo "Clients should connect directly to: http://$(hostname):8001 and http://$(hostname):8002"
+
+# Wait for both servers to finish (keeps PBS job alive)
+wait
