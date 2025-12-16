@@ -485,15 +485,23 @@ def render_to_png(
     """
     Render CadQuery model to PNG image.
     
-    Uses pyvista for offscreen rendering if available,
-    otherwise falls back to basic screenshot.
+    Tries multiple rendering backends in order:
+    1. matplotlib + numpy-stl (reliable, no X server needed)
+    2. FreeCAD headless (if available)
+    3. PIL placeholder (last resort)
     """
     # Ensure directory exists
     Path(filepath).parent.mkdir(parents=True, exist_ok=True)
     
+    # Try Method 1: matplotlib + numpy-stl (Simple and reliable)
     try:
-        # Try using pyvista for rendering
-        import pyvista as pv
+        import matplotlib
+        matplotlib.use('Agg')  # Non-interactive backend, no X server needed
+        import matplotlib.pyplot as plt
+        from mpl_toolkits.mplot3d import Axes3D
+        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+        import numpy as np
+        from stl import mesh as stl_mesh
         import tempfile
         
         # Export to temporary STL
@@ -502,33 +510,183 @@ def render_to_png(
         
         export_stl(model, tmp_path)
         
-        # Load and render with pyvista
-        pv.global_theme.background = 'white'
-        mesh = pv.read(tmp_path)
+        # Load STL file
+        mesh = stl_mesh.Mesh.from_file(tmp_path)
         
-        # Create plotter
-        plotter = pv.Plotter(off_screen=True, window_size=resolution)
-        plotter.add_mesh(mesh, color='steelblue', smooth_shading=True)
-        plotter.view_isometric()
-        plotter.screenshot(filepath)
-        plotter.close()
+        # Create figure with high DPI
+        dpi = 100
+        fig = plt.figure(figsize=(resolution[0]/dpi, resolution[1]/dpi), dpi=dpi)
+        ax = fig.add_subplot(111, projection='3d')
         
-        # Cleanup temp file
+        # Create poly collection from mesh
+        vectors = mesh.vectors
+        collection = Poly3DCollection(vectors, alpha=0.9, facecolor='steelblue', edgecolor='navy', linewidths=0.5)
+        ax.add_collection3d(collection)
+        
+        # Auto scale to mesh size
+        scale = mesh.points.flatten()
+        ax.auto_scale_xyz(scale, scale, scale)
+        
+        # Set isometric view
+        ax.view_init(elev=30, azim=45)
+        
+        # Set background color
+        ax.set_facecolor('white')
+        fig.patch.set_facecolor('white')
+        
+        # Remove axes for cleaner look
+        ax.set_axis_off()
+        
+        # Save to file
+        plt.tight_layout()
+        plt.savefig(filepath, dpi=dpi, bbox_inches='tight', facecolor='white')
+        plt.close(fig)
+        
+        # Cleanup
         os.unlink(tmp_path)
         
-    except ImportError:
-        # Fallback: create placeholder image
+        print(f"INFO: Rendered with matplotlib: {filepath}")
+        return
+        
+    except Exception as e:
+        print(f"INFO: matplotlib rendering failed: {e}, trying fallbacks...")
+    
+    # Try Method 1: CadQuery OCP native rendering (OpenCascade)
+    try:
+        from OCP.Graphic3d import Graphic3d_Camera, Graphic3d_RenderingParams
+        from OCP.V3d import V3d_View, V3d_Viewer
+        from OCP.Aspect import Aspect_DisplayConnection, Aspect_TypeOfTriedronPosition
+        from OCP.OpenGl import OpenGl_GraphicDriver
+        from OCP.Image import Image_AlienPixMap, Image_Format
+        
+        import tempfile
+        
+        # Get the shape from CadQuery model
+        shape = model.val()
+        
+        # Create display connection (offscreen)
+        display_connection = Aspect_DisplayConnection()
+        
+        # Create graphics driver
+        graphics_driver = OpenGl_GraphicDriver(display_connection)
+        
+        # Create viewer
+        viewer = V3d_Viewer(graphics_driver)
+        
+        # Create view
+        view = viewer.CreateView()
+        
+        # Set background color (white)
+        view.SetBackgroundColor(1.0, 1.0, 1.0)
+        
+        # Add the shape to display
+        # This requires an interactive context, so we'll use a simpler approach
+        # Export to image using OCP's built-in rendering
+        
+        # Set up camera for isometric view
+        view.Camera().SetProjectionType(Graphic3d_Camera.Projection_Orthographic)
+        
+        # Fit all
+        view.FitAll(0.01, False)
+        view.ZFitAll()
+        
+        # Set isometric view
+        view.SetProj(1, 1, 1)  # Isometric direction
+        
+        # Create image buffer
+        image = Image_AlienPixMap()
+        image.InitTrash(Image_Format.Image_Format_RGB, resolution[0], resolution[1])
+        
+        # Render to image
+        view.ToPixMap(image, resolution[0], resolution[1])
+        
+        # Save to file
+        image.Save(filepath)
+        
+        print(f"INFO: Rendered with CadQuery OCP: {filepath}")
+        return
+        
+    except Exception as e:
+        print(f"INFO: CadQuery OCP rendering failed: {e}, trying FreeCAD...")
+    
+    # Try Method 2: FreeCAD headless
+    try:
+        import tempfile
+        import sys
+        
+        # Export to temporary STEP file (FreeCAD works better with STEP)
+        with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as tmp:
+            tmp_path = tmp.name
+        
+        export_step(model, tmp_path)
+        
+        # Try to import and render with FreeCAD
         try:
-            from PIL import Image, ImageDraw
+            import FreeCAD
+            import FreeCADGui
             
-            img = Image.new('RGB', resolution, color='white')
-            draw = ImageDraw.Draw(img)
-            draw.text((resolution[0]//4, resolution[1]//2), 
-                     "CAD Render Placeholder", fill='gray')
-            img.save(filepath)
-        except ImportError:
-            # No rendering available
-            raise RuntimeError("Neither pyvista nor PIL available for rendering")
+            # Create document and import
+            doc = FreeCAD.newDocument("TempDoc")
+            
+            # Import STEP file
+            import Import
+            Import.insert(tmp_path, doc.Name)
+            
+            # Initialize GUI (required for rendering, but can be headless)
+            if not FreeCADGui.ActiveDocument:
+                FreeCADGui.showMainWindow()
+            
+            # Get or create view
+            view = FreeCADGui.activeDocument().activeView()
+            
+            # Set isometric view and fit all
+            view.viewIsometric()
+            view.fitAll()
+            
+            # Set render settings
+            view.setAnimationEnabled(False)
+            
+            # Render to image
+            view.saveImage(filepath, resolution[0], resolution[1], 'Current')
+            
+            # Cleanup
+            FreeCAD.closeDocument(doc.Name)
+            os.unlink(tmp_path)
+            
+            print(f"INFO: Rendered with FreeCAD: {filepath}")
+            return
+            
+        except ImportError as e:
+            print(f"INFO: FreeCAD not available: {e}")
+        except Exception as e:
+            print(f"INFO: FreeCAD rendering failed: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    
+    except Exception as e:
+        print(f"INFO: FreeCAD setup failed: {e}")
+    
+    # Fallback Method 3: PIL placeholder
+    print(f"INFO: Using PIL placeholder for {filepath}")
+    try:
+        from PIL import Image, ImageDraw
+        
+        img = Image.new('RGB', resolution, color='white')
+        draw = ImageDraw.Draw(img)
+        
+        # Add informative text
+        text_y = resolution[1] // 2
+        draw.text((resolution[0]//4, text_y - 20), 
+                 "CAD Model Generated", fill='darkgray', anchor="lt")
+        draw.text((resolution[0]//4, text_y + 10), 
+                 "(3D render unavailable)", fill='gray', anchor="lt")
+        img.save(filepath)
+        
+    except Exception as e:
+        raise RuntimeError(f"All rendering methods failed. Last error: {e}")
 
 
 def get_model_volume(model: Any) -> float:

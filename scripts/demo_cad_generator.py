@@ -137,12 +137,12 @@ def run_interactive(console: Console, client):
     console.print("[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]\n")
     
     console.print("Supported components: [green]Flange, Gear, Nut, Shaft, Spring[/green]\n")
-    console.print("[dim]Example inputs:")
-    console.print("  • A circular flange with base diameter 120mm, inner bore 40mm")
-    console.print("  • A spur gear with 24 teeth, module 2.5, face width 15mm")
-    console.print("  • A hexagonal nut with size 30mm, height 12mm, thread diameter 16mm")
-    console.print("  • A stepped shaft: section 1 is 25mm × 50mm, section 2 is 20mm × 40mm")
-    console.print("  • A compression spring with wire 3mm, coil diameter 25mm, 8 coils[/dim]\n")
+    console.print("[dim]Example inputs:[/dim]")
+    console.print("[dim]  • A circular flange with base diameter 120mm, inner bore 40mm[/dim]")
+    console.print("[dim]  • A spur gear with 24 teeth, module 2.5, face width 15mm[/dim]")
+    console.print("[dim]  • A hexagonal nut with size 30mm, height 12mm, thread diameter 16mm[/dim]")
+    console.print("[dim]  • A stepped shaft: section 1 is 25mm × 50mm, section 2 is 20mm × 40mm[/dim]")
+    console.print("[dim]  • A compression spring with wire 3mm, coil diameter 25mm, 8 coils[/dim]\n")
     
     # Get user input
     text = Prompt.ask("[bold]Enter your component description[/bold]")
