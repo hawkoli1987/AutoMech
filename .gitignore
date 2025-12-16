@@ -9,5 +9,6 @@ inference
 log
 repos
 data
+artifacts
 .cursorignore
 .cursor
