@@ -8,7 +8,7 @@
 CLIENT_NODE="${1:-46}"
 SERVER_NODE="${2:-45}"
 
-SETUP_SCRIPT="/scratch/Projects/SPEC-SF-AISG/source_files/AutoMech/scripts/mech_client_setup.sh"
+SETUP_SCRIPT="local_model_server/mech_client_setup.sh"
 
 echo "Launching PBS job on hopper-${CLIENT_NODE}, server on hopper-${SERVER_NODE}"
 
