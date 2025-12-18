@@ -35,12 +35,7 @@ class TestPackageStructure:
         from src.schemas import (
             GraphState,
             GraphStateMetadata,
-            CADCategory,
-            FlangeSpec,
-            GearSpec,
-            NutSpec,
-            ShaftSpec,
-            SpringSpec,
+            CadQueryCodeDesign,
             ParamJudgeResult,
             VLMJudgeResult,
             CADResult,
@@ -66,91 +61,76 @@ class TestPackageStructure:
 class TestSchemas:
     """Test Pydantic schema validation."""
     
-    def test_flange_spec_valid(self):
-        """Test valid FlangeSpec creation."""
-        from src.schemas import FlangeSpec
+    def test_cadquery_code_design_valid(self):
+        """Test valid CadQueryCodeDesign creation."""
+        from src.schemas import CadQueryCodeDesign
         
-        spec = FlangeSpec(
-            base_diameter=124.0,
-            base_height=19.0,
-            outer_diameter=90.0,
-            inner_diameter=36.0,
-            flange_height=141.0
+        design = CadQueryCodeDesign(
+            description="A simple box",
+            code="result = cq.Workplane('XY').box(10, 10, 10)",
+            entry_point="result",
+            required_imports=["cadquery as cq"],
         )
-        assert spec.base_diameter == 124.0
-        assert spec.inner_diameter == 36.0
+        assert design.description == "A simple box"
+        assert "box(10, 10, 10)" in design.code
+        assert design.entry_point == "result"
     
-    def test_gear_spec_valid(self):
-        """Test valid GearSpec creation."""
-        from src.schemas import GearSpec
+    def test_cadquery_code_design_minimal(self):
+        """Test minimal CadQueryCodeDesign with defaults."""
+        from src.schemas import CadQueryCodeDesign
         
-        spec = GearSpec(
-            module=6.0,
-            teeth_number=71,
-            width=10.0,
-            bore_d=26.9
-        )
-        assert spec.teeth_number == 71
-    
-    def test_nut_spec_valid(self):
-        """Test valid NutSpec creation."""
-        from src.schemas import NutSpec
-        
-        spec = NutSpec(
-            nut_size=46.0,
+        design = CadQueryCodeDesign(
+            description="A cylinder",
+            code="result = cq.Workplane('XY').circle(5).extrude(10)",
             nut_height=19.0,
             inner_diameter=24.0
         )
-        assert spec.nut_size == 46.0
+        assert design.entry_point == "result"
+        assert len(design.required_imports) > 0
     
     def test_graph_state_metadata(self):
         """Test GraphStateMetadata creation."""
-        from src.schemas import GraphStateMetadata, CADCategory
+        from src.schemas import GraphStateMetadata
         
         meta = GraphStateMetadata(
-            sample_id="flange_00001",
-            category=CADCategory.FLANGE,
-            stl_path="/path/to/flange.stl",
+            sample_id="bracket_00001",
+            stl_path="/path/to/bracket.stl",
             run_id="run_001"
         )
-        assert meta.sample_id == "flange_00001"
-        assert meta.category == CADCategory.FLANGE
+        assert meta.sample_id == "bracket_00001"
     
     def test_graph_state_creation(self):
         """Test GraphState creation with all fields."""
-        from src.schemas import GraphState, GraphStateMetadata, CADCategory
+        from src.schemas import GraphState, GraphStateMetadata
         
         state = GraphState(
-            text_desc="A flange with diameter 100mm",
-            gt_param_spec={"base_diameter": 100.0},
+            text_desc="A mounting bracket with two holes",
+            gt_param_spec=None,
             metadata=GraphStateMetadata(
-                sample_id="flange_00001",
-                category=CADCategory.FLANGE
+                sample_id="bracket_00001",
             )
         )
-        assert state.text_desc == "A flange with diameter 100mm"
+        assert state.text_desc == "A mounting bracket with two holes"
         assert state.iteration == 0
         assert state.done is False
         assert state.pred_param_spec is None
     
     def test_llm4cad_sample_to_graph_state(self):
         """Test converting LLM4CADSample to GraphState."""
-        from src.schemas import LLM4CADSample, CADCategory
+        from src.schemas import LLM4CADSample
         
         sample = LLM4CADSample(
-            sample_id="flange_00001",
-            category=CADCategory.FLANGE,
-            text_desc="A flange with diameter 124mm",
-            gt_param_spec={"base_diameter": 124.0, "base_height": 19.0},
-            stl_path="/path/to/flange_00001.stl"
+            sample_id="bracket_00001",
+            text_desc="A mounting bracket with two holes",
+            gt_param_spec=None,
+            stl_path="/path/to/bracket_00001.stl"
         )
         
         state = sample.to_graph_state(run_id="test_run")
         
         assert state.text_desc == sample.text_desc
         assert state.gt_param_spec == sample.gt_param_spec
-        assert state.metadata.sample_id == "flange_00001"
-        assert state.metadata.category == CADCategory.FLANGE
+        assert state.metadata.sample_id == "bracket_00001"
         assert state.metadata.run_id == "test_run"
         assert state.iteration == 0
         assert state.done is False

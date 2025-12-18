@@ -11,7 +11,7 @@ Flow:
 """
 
 import json
-from typing import Annotated, Any, TypedDict, Optional
+from typing import Annotated, Any, TypedDict, Optional, Union
 from operator import add
 
 from langgraph.graph import StateGraph, END
@@ -20,7 +20,6 @@ from src.config import get_config
 from src.schemas import (
     GraphState,
     GraphStateMetadata,
-    CADCategory,
     ParamJudgeResult,
     VLMJudgeResult,
     CADResult,
@@ -40,7 +39,7 @@ class AgentState(TypedDict):
     """
     # Input fields
     text_desc: str
-    gt_param_spec: dict | list
+    gt_param_spec: Union[dict, list, None]
     
     # Generated fields
     pred_param_spec: Optional[dict]
@@ -63,7 +62,6 @@ class AgentState(TypedDict):
     
     # Metadata
     sample_id: str
-    category: str
     stl_path: Optional[str]
     run_id: Optional[str]
     
@@ -86,7 +84,6 @@ def graph_state_to_agent_state(gs: GraphState) -> AgentState:
         iteration=gs.iteration,
         done=gs.done,
         sample_id=gs.metadata.sample_id,
-        category=gs.metadata.category.value,
         stl_path=gs.metadata.stl_path,
         run_id=gs.metadata.run_id,
         iteration_history=gs.iteration_history,
@@ -109,7 +106,6 @@ def agent_state_to_graph_state(state: AgentState) -> GraphState:
         done=state["done"],
         metadata=GraphStateMetadata(
             sample_id=state["sample_id"],
-            category=CADCategory(state["category"]),
             stl_path=state["stl_path"],
             run_id=state["run_id"],
         ),
@@ -156,17 +152,14 @@ Scoring criteria:
 
 overall_score = (geometric_score + completeness_score + quality_score) / 3"""
 
-JUDGE_VLM_USER = """Evaluate this rendered CAD model of a {category}:
-
-Specified Parameters:
-{pred_spec}
+JUDGE_VLM_USER = """Evaluate this rendered CAD model:
 
 Original Text Description:
 "{text_desc}"
 
 Carefully examine the image and score:
-1. Does the geometry match the specified dimensions?
-2. Are all features (holes, threads, chamfers, etc.) present?
+1. Does the geometry match the description?
+2. Are all features (holes, threads, chamfers, etc.) present as described?
 3. Is the model well-formed and manufacturable?
 
 Output only valid JSON matching the required format."""
@@ -462,8 +455,6 @@ def judge_cad_vlm(state: AgentState) -> dict:
         
         # Build prompt
         prompt = JUDGE_VLM_USER.format(
-            category=state["category"],
-            pred_spec=pred_spec_str,
             text_desc=state["text_desc"],
         )
         
@@ -686,9 +677,8 @@ class DesignAgent:
     def run_from_sample(
         self,
         text_desc: str,
-        gt_param_spec: dict | list,
-        category: CADCategory | str,
         sample_id: str,
+        gt_param_spec: Optional[dict | list] = None,
         run_id: Optional[str] = None,
         stl_path: Optional[str] = None,
     ) -> GraphState:
@@ -697,24 +687,19 @@ class DesignAgent:
         
         Args:
             text_desc: Natural language description.
-            gt_param_spec: Ground truth parameters.
-            category: Part category.
             sample_id: Sample identifier.
+            gt_param_spec: Optional ground truth parameters (for legacy compatibility).
             run_id: Optional run identifier.
             stl_path: Optional path to reference STL.
         
         Returns:
             Final GraphState after agent execution.
         """
-        if isinstance(category, str):
-            category = CADCategory(category)
-        
         initial_state = GraphState(
             text_desc=text_desc,
             gt_param_spec=gt_param_spec,
             metadata=GraphStateMetadata(
                 sample_id=sample_id,
-                category=category,
                 stl_path=stl_path,
                 run_id=run_id,
             ),

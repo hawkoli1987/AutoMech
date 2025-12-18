@@ -5,71 +5,15 @@ Defines data models for GraphState, parametric specifications,
 CAD results, and judge outputs.
 """
 
-from typing import Optional, Literal
+from typing import Optional, Literal, Union
 from pydantic import BaseModel, Field
 from enum import Enum
 
 
 # =============================================================================
-# Enums
+# Note: Fixed category schemas (FlangeSpec, GearSpec, etc.) have been removed.
+# This codebase now focuses on freeform CAD generation using CadQueryCodeDesign.
 # =============================================================================
-
-class CADCategory(str, Enum):
-    """LLM4CAD dataset categories."""
-    FLANGE = "Flange"
-    NUT = "Nut"
-    SHAFT = "Shaft"
-    GEAR = "Gear"
-    SPRING = "Spring"
-
-
-# =============================================================================
-# Parametric Specifications (per category)
-# =============================================================================
-
-class FlangeSpec(BaseModel):
-    """Parametric specification for Flange category."""
-    base_diameter: float = Field(..., description="Base diameter in mm")
-    base_height: float = Field(..., description="Base height/thickness in mm")
-    outer_diameter: float = Field(..., description="Raised face outer diameter in mm")
-    inner_diameter: float = Field(..., description="Bore diameter in mm")
-    flange_height: float = Field(..., description="Total flange height in mm")
-
-
-class GearSpec(BaseModel):
-    """Parametric specification for Gear category."""
-    module: float = Field(..., description="Gear module (tooth size parameter)")
-    teeth_number: int = Field(..., description="Number of teeth")
-    width: float = Field(..., description="Gear width/thickness in mm")
-    bore_d: float = Field(..., description="Bore diameter in mm")
-
-
-class NutSpec(BaseModel):
-    """Parametric specification for Nut category."""
-    nut_size: float = Field(..., description="Nut size (across flats) in mm")
-    nut_height: float = Field(..., description="Nut height in mm")
-    inner_diameter: float = Field(..., description="Thread inner diameter in mm")
-
-
-class ShaftSpec(BaseModel):
-    """Parametric specification for Shaft category."""
-    diameter: float = Field(..., description="Shaft diameter in mm")
-    length: float = Field(..., description="Shaft length in mm")
-    # Additional fields may vary - keep flexible
-    step_diameter: Optional[float] = Field(None, description="Step diameter if stepped shaft")
-    step_length: Optional[float] = Field(None, description="Step length if stepped shaft")
-
-
-class SpringSpec(BaseModel):
-    """Parametric specification for Spring category."""
-    wire_diameter: float = Field(..., description="Wire diameter in mm")
-    coil_diameter: float = Field(..., description="Mean coil diameter in mm")
-    num_coils: int = Field(..., description="Number of active coils")
-    free_length: float = Field(..., description="Free length in mm")
-
-
-# Union type for any parameter spec
-ParamSpec = FlangeSpec | GearSpec | NutSpec | ShaftSpec | SpringSpec
 
 
 # =============================================================================
@@ -132,7 +76,6 @@ class CADResult(BaseModel):
 class GraphStateMetadata(BaseModel):
     """Metadata stored in GraphState."""
     sample_id: str = Field(..., description="Unique sample identifier")
-    category: CADCategory = Field(..., description="Part category")
     stl_path: Optional[str] = Field(None, description="Path to ground truth STL")
     run_id: Optional[str] = Field(None, description="Unique run identifier")
 
@@ -143,17 +86,20 @@ class GraphState(BaseModel):
     
     This is the central data structure that flows through all nodes
     in the iterative design loop.
+    
+    Note: For freeform CAD generation, pred_param_spec is not used.
+    Instead, the agent generates CadQuery code directly.
     """
     # Input fields
     text_desc: str = Field(..., description="Natural language description of the part")
-    gt_param_spec: dict | list = Field(..., description="Ground truth parametric specification (dict or list for Shaft)")
+    gt_param_spec: Optional[Union[dict, list]] = Field(None, description="Ground truth parametric specification (optional, for legacy compatibility)")
     
-    # Generated fields
-    pred_param_spec: Optional[dict] = Field(None, description="Predicted parametric specification")
+    # Generated fields (legacy - may not be used in freeform mode)
+    pred_param_spec: Optional[dict] = Field(None, description="Predicted parametric specification (legacy)")
     
-    # Param judge results
-    param_score: Optional[float] = Field(None, ge=0.0, le=1.0, description="Parameter accuracy score")
-    param_feedback: Optional[str] = Field(None, description="Parameter judge feedback")
+    # Param judge results (legacy - may not be used in freeform mode)
+    param_score: Optional[float] = Field(None, ge=0.0, le=1.0, description="Parameter accuracy score (legacy)")
+    param_feedback: Optional[str] = Field(None, description="Parameter judge feedback (legacy)")
     
     # CAD generation results
     cad_file: Optional[str] = Field(None, description="Path to generated CAD file")
@@ -179,12 +125,16 @@ class GraphState(BaseModel):
 # =============================================================================
 
 class LLM4CADSample(BaseModel):
-    """A single sample from the LLM4CAD dataset."""
-    sample_id: str = Field(..., description="Unique identifier (e.g., 'flange_00001')")
-    category: CADCategory = Field(..., description="Part category")
+    """
+    A single sample from the LLM4CAD dataset.
+    
+    Note: This is kept for backward compatibility with existing data loaders,
+    but category-specific logic has been removed for freeform generation.
+    """
+    sample_id: str = Field(..., description="Unique identifier")
     text_desc: str = Field(..., description="Human language description")
-    gt_param_spec: dict | list = Field(..., description="Ground truth parameters from JSON (dict or list for Shaft)")
-    stl_path: str = Field(..., description="Path to STL mesh file")
+    gt_param_spec: Optional[Union[dict, list]] = Field(None, description="Ground truth parameters (optional, for legacy compatibility)")
+    stl_path: Optional[str] = Field(None, description="Path to STL mesh file (optional)")
     
     def to_graph_state(self, run_id: Optional[str] = None) -> GraphState:
         """Convert sample to initial GraphState for agent."""
@@ -202,7 +152,6 @@ class LLM4CADSample(BaseModel):
             done=False,
             metadata=GraphStateMetadata(
                 sample_id=self.sample_id,
-                category=self.category,
                 stl_path=self.stl_path,
                 run_id=run_id
             ),

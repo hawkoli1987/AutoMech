@@ -7,7 +7,7 @@ Loads configuration from YAML files with environment variable substitution.
 import os
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import yaml
 from pydantic import BaseModel, Field
@@ -125,7 +125,7 @@ def _substitute_env_vars(value: Any) -> Any:
     return value
 
 
-def load_config(config_path: Optional[str | Path] = None) -> Config:
+def load_config(config_path: Optional[Union[str, Path]] = None) -> Config:
     """
     Load configuration from YAML file.
     
@@ -186,7 +186,7 @@ def set_config(config: Config) -> None:
     _config = config
 
 
-def reload_config(config_path: Optional[str | Path] = None) -> Config:
+def reload_config(config_path: Optional[Union[str, Path]] = None) -> Config:
     """Reload configuration from file."""
     global _config
     _config = load_config(config_path)

@@ -20,7 +20,7 @@ class TestStateConversion:
     
     def test_graph_state_to_agent_state(self):
         """Test converting GraphState to AgentState."""
-        from src.schemas import GraphState, GraphStateMetadata, CADCategory
+        from src.schemas import GraphState, GraphStateMetadata
         from src.agents.design_agent import graph_state_to_agent_state
         
         gs = GraphState(
@@ -33,7 +33,6 @@ class TestStateConversion:
             done=False,
             metadata=GraphStateMetadata(
                 sample_id="bracket_001",
-                category=CADCategory.FLANGE,  # Category less relevant now
                 stl_path="/path/to/stl",
                 run_id="run_001",
             ),
@@ -49,7 +48,6 @@ class TestStateConversion:
     def test_agent_state_to_graph_state(self):
         """Test converting AgentState back to GraphState."""
         from src.agents.design_agent import AgentState, agent_state_to_graph_state
-        from src.schemas import CADCategory
         
         agent_state = AgentState(
             text_desc="A cylindrical spacer",
@@ -64,7 +62,6 @@ class TestStateConversion:
             iteration=2,
             done=True,
             sample_id="spacer_001",
-            category="Flange",
             stl_path="/path/to/stl",
             run_id="run_002",
             iteration_history=[],
@@ -80,7 +77,7 @@ class TestStateConversion:
     
     def test_roundtrip_conversion(self):
         """Test that state survives roundtrip conversion."""
-        from src.schemas import GraphState, GraphStateMetadata, CADCategory
+        from src.schemas import GraphState, GraphStateMetadata
         from src.agents.design_agent import (
             graph_state_to_agent_state,
             agent_state_to_graph_state,
@@ -91,7 +88,6 @@ class TestStateConversion:
             gt_param_spec={},
             metadata=GraphStateMetadata(
                 sample_id="custom_001",
-                category=CADCategory.FLANGE,
             ),
         )
         
