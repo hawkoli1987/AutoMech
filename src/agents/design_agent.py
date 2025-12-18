@@ -118,109 +118,10 @@ def agent_state_to_graph_state(state: AgentState) -> GraphState:
 
 
 # =============================================================================
-# Parameter Schemas per Category
+# Freeform Generation Only - No Fixed Templates
 # =============================================================================
-
-CATEGORY_PARAM_SCHEMAS = {
-    "Flange": {
-        "type": "object",
-        "properties": {
-            "base_diameter": {"type": "number", "description": "Base diameter in mm"},
-            "base_height": {"type": "number", "description": "Base height/thickness in mm"},
-            "outer_diameter": {"type": "number", "description": "Raised face outer diameter in mm"},
-            "inner_diameter": {"type": "number", "description": "Bore diameter in mm"},
-            "flange_height": {"type": "number", "description": "Total flange height in mm"},
-        },
-        "required": ["base_diameter", "base_height", "outer_diameter", "inner_diameter", "flange_height"],
-    },
-    "Gear": {
-        "type": "object",
-        "properties": {
-            "module": {"type": "number", "description": "Gear module (tooth size parameter)"},
-            "teeth_number": {"type": "integer", "description": "Number of teeth"},
-            "width": {"type": "number", "description": "Gear width/thickness in mm"},
-            "bore_d": {"type": "number", "description": "Bore diameter in mm"},
-        },
-        "required": ["module", "teeth_number", "width", "bore_d"],
-    },
-    "Nut": {
-        "type": "object",
-        "properties": {
-            "nut_size": {"type": "number", "description": "Nut size (across flats) in mm"},
-            "nut_height": {"type": "number", "description": "Nut height in mm"},
-            "inner_diameter": {"type": "number", "description": "Thread inner diameter in mm"},
-        },
-        "required": ["nut_size", "nut_height", "inner_diameter"],
-    },
-    "Shaft": {
-        "type": "array",
-        "items": {
-            "type": "array",
-            "items": {"type": "number"},
-            "minItems": 2,
-            "maxItems": 2,
-            "description": "[length, diameter] pair for each shaft section",
-        },
-        "description": "Array of [length, diameter] pairs for stepped shaft sections",
-    },
-    "Spring": {
-        "type": "object",
-        "properties": {
-            "radius": {"type": "number", "description": "Coil radius in mm"},
-            "pitch": {"type": "number", "description": "Pitch (spacing between coils) in mm"},
-            "height": {"type": "number", "description": "Free length/height in mm"},
-            "wire_radius": {"type": "number", "description": "Wire radius in mm"},
-        },
-        "required": ["radius", "pitch", "height", "wire_radius"],
-    },
-}
-
-
-# =============================================================================
-# Prompt Templates
-# =============================================================================
-
-GENERATE_PARAM_SYSTEM = """You are a mechanical engineer assistant that extracts parametric specifications from natural language descriptions of mechanical parts.
-
-You must output valid JSON matching the provided schema. Do not include any explanation or markdown formatting - output only the raw JSON object."""
-
-GENERATE_PARAM_USER = """Given the following description of a {category} mechanical part, extract the parametric specification as a JSON object.
-
-Description:
-{text_desc}
-
-{feedback_section}
-
-Expected JSON schema for {category}:
-{schema}
-
-Output only the JSON object, no explanation or markdown."""
-
-JUDGE_PARAM_SYSTEM = """You are a CAD parameter judge. Compare predicted parameters against ground truth and score the accuracy.
-
-You must output valid JSON with the following structure:
-{{
-    "overall_score": <float 0-1>,
-    "parameter_scores": {{<param>: <score>, ...}},
-    "feedback": "<specific issues or improvements needed>"
-}}
-
-Scoring criteria:
-- Exact match: 1.0
-- Within 5% tolerance: 0.8
-- Within 10% tolerance: 0.6
-- Within 20% tolerance: 0.4
-- Larger deviation: 0.0"""
-
-JUDGE_PARAM_USER = """Compare these two parameter specifications for a {category}:
-
-Ground Truth:
-{gt_spec}
-
-Predicted:
-{pred_spec}
-
-Analyze each parameter and provide scores. Output only JSON."""
+# All CAD generation now uses LLM-generated CadQuery code (see CODEGEN_SYSTEM below)
+# This allows arbitrary mechanical parts beyond fixed categories
 
 JUDGE_VLM_SYSTEM = """You are an expert CAD visual quality judge specializing in mechanical parts evaluation.
 
@@ -288,181 +189,186 @@ Output only valid JSON matching the required format."""
 
 
 # =============================================================================
+# Freeform Code Generation Prompts (Proposal 2)
+# =============================================================================
+
+CODEGEN_SYSTEM = """You are an expert CadQuery programmer specializing in parametric 3D CAD modeling.
+
+Generate Python code using the CadQuery API to create mechanical parts from text descriptions.
+
+CODE TEMPLATE:
+```python
+# NOTE: Do NOT include any import statements!
+# The 'cq' module is pre-injected and already available.
+
+# 1. Start with a workplane
+result = cq.Workplane("XY")
+
+# 2. Build base geometry (use .circle().extrude() for cylinders, NOT .cylinder())
+result = result.circle(radius).extrude(height)
+# OR for rectangular parts
+result = result.box(length, width, height)
+
+# 3. Add features (holes, cutouts, etc.)
+result = result.faces(">Z").workplane().circle(hole_radius).cutThruAll()
+
+# 4. Boolean operations - AVOID separate objects creating Compounds
+# PREFER: Use .cut(), .cutThruAll(), .cutBlind() directly on faces
+result = result.faces(">Z").workplane().rect(x, y).cutBlind(-depth)
+# AVOID: other_part = cq.Workplane(...); result.union(other_part)
+
+# 5. Finishing touches
+result = result.edges("|Z").fillet(radius)
+```
+
+CRITICAL RULES:
+1. **DO NOT include any 'import' statements** - cq is already available
+2. **Always assign the final shape to variable 'result'**
+3. **Build a SINGLE SOLID, not a Compound**:
+   - AVOID creating separate objects with .union() - this makes Compound geometry
+   - PREFER building features directly: .cut(), .cutThruAll(), .cutBlind()
+   - Use .circle().extrude() for cylinders, NOT .cylinder()
+4. **All dimensions in millimeters**
+5. Comment each logical step clearly
+6. Use descriptive intermediate variables when helpful
+7. No external file I/O operations
+8. No infinite loops or recursion
+9. Infer missing dimensions using standard engineering practices
+
+COMMON PATTERNS:
+- Cylinders: cq.Workplane("XY").circle(radius).extrude(height)
+- Holes: .faces(">Z").workplane().pushPoints([...]).circle(r).cutThruAll()
+- Chamfers: .edges().chamfer(distance)
+- Fillets: .edges().fillet(radius)
+- Arrays: .rarray(xSpacing, ySpacing, xCount, yCount)
+- Selection: .faces(">Z") (top face), .edges("|Z") (vertical edges)
+
+OUTPUT FORMAT:
+{{
+    "description": "Brief summary of the design",
+    "code": "# cq is already available\\nresult = cq.Workplane('XY')...",
+    "entry_point": "result",
+    "required_imports": [],
+    "comments": "Any design notes or assumptions"
+}}
+
+**IMPORTANT**: Do NOT include "import cadquery as cq" or any import statements in the code field!
+
+Output only valid JSON matching this schema."""
+
+CODEGEN_USER = """Generate CadQuery code to create this mechanical part:
+
+Description:
+{text_desc}
+
+{feedback_section}
+
+Think step-by-step:
+1. What base shape do I need? (box, cylinder, sphere)
+2. What dimensions should I use? (infer from description)
+3. What features do I need to add? (holes, chamfers, fillets)
+4. What boolean operations? (cut, union, intersect)
+5. How do I select the right faces/edges?
+
+Output only valid JSON with the 'description', 'code', 'entry_point', 'required_imports', and 'comments' fields."""
+
+
+# =============================================================================
 # Node Functions
 # =============================================================================
 
-def generate_param_spec(state: AgentState) -> dict:
+def generate_freeform_code(state: AgentState) -> dict:
     """
-    GenerateParamSpec Node: Generate parametric specification from text description.
+    GenerateFreeformCode Node: Generate CadQuery code for freeform CAD design.
     
-    Uses LLM to extract structured parameters from natural language.
+    This node is used instead of generate_param_spec when in freeform mode.
+    Uses LLM to generate complete CadQuery Python code.
     """
+    from src.schemas import CadQueryCodeDesign
+    
     config = get_config()
     client = get_llm_client()
     
-    category = state["category"]
     text_desc = state["text_desc"]
     iteration = state["iteration"]
     
-    # Get schema for this category
-    schema = CATEGORY_PARAM_SCHEMAS.get(category, {})
-    schema_str = json.dumps(schema, indent=2)
-    
-    # Add feedback from previous iteration if available (both param and VLM feedback)
+    # Add feedback from previous iteration if available
     feedback_section = ""
     if iteration > 0:
         feedback_parts = []
         
-        # Add parameter judge feedback
-        if state.get("param_feedback"):
-            feedback_parts.append(f"Parameter Judge Feedback:\n{state['param_feedback']}")
-        
-        # Add VLM visual feedback
+        # Add VLM visual feedback (most important for code generation)
         if state.get("vlm_feedback"):
             feedback_parts.append(f"Visual Quality Feedback:\n{state['vlm_feedback']}")
         
-        # Add previous prediction for reference
-        if state.get("pred_param_spec"):
-            prev_pred = json.dumps(state["pred_param_spec"], indent=2)
-            feedback_parts.append(f"Previous Prediction (to improve upon):\n{prev_pred}")
+        # Add previous code for reference
+        if state.get("pred_param_spec", {}).get("code"):
+            prev_code = state["pred_param_spec"]["code"]
+            feedback_parts.append(f"Previous Code (to improve upon):\n```python\n{prev_code}\n```")
         
         if feedback_parts:
             feedback_section = f"""
-=== ITERATION {iteration} - IMPROVEMENT REQUIRED ===
+=== ITERATION {iteration} - CODE IMPROVEMENT REQUIRED ===
 {chr(10).join(feedback_parts)}
 
-IMPORTANT: Carefully address ALL the feedback above and generate improved parameters.
+IMPORTANT: Address ALL feedback above. Fix dimensional errors, add missing features, and improve code quality.
 """
     
     # Build prompt
-    prompt = GENERATE_PARAM_USER.format(
-        category=category,
+    prompt = CODEGEN_USER.format(
         text_desc=text_desc,
         feedback_section=feedback_section,
-        schema=schema_str,
     )
     
     try:
-        pred_spec = client.generate_json(
+        # Use JSON generation for structured output
+        code_design_dict = client.generate_json(
             prompt=prompt,
-            system_prompt=GENERATE_PARAM_SYSTEM,
+            system_prompt=CODEGEN_SYSTEM,
             temperature=0.3,
-            max_tokens=512,
+            max_tokens=2048,  # More tokens needed for code
         )
+        
+        # Validate required fields
+        if not isinstance(code_design_dict, dict):
+            raise ValueError(f"Expected dict, got {type(code_design_dict)}")
+        
+        if "code" not in code_design_dict:
+            raise ValueError("Missing required field 'code'")
+        
+        # Set defaults for optional fields
+        code_design_dict.setdefault("description", text_desc[:100])
+        code_design_dict.setdefault("entry_point", "result")
+        code_design_dict.setdefault("required_imports", ["cadquery as cq"])
+        code_design_dict.setdefault("comments", "")
+        
+        # Store in pred_param_spec as a dict (will be converted to CadQueryCodeDesign later)
+        return {"pred_param_spec": code_design_dict}
+        
     except Exception as e:
-        # On failure, return empty dict and let judge handle it
-        pred_spec = {}
-        print(f"[GenerateParamSpec] Failed to generate: {e}")
-    
-    return {"pred_param_spec": pred_spec}
-
-
-def judge_param_spec(state: AgentState) -> dict:
-    """
-    JudgeParamSpec Node: Compare predicted vs ground truth parameters.
-    
-    Outputs score and feedback for iterative improvement.
-    """
-    config = get_config()
-    client = get_llm_client()
-    
-    category = state["category"]
-    gt_spec = state["gt_param_spec"]
-    pred_spec = state["pred_param_spec"]
-    
-    # If no prediction, score is 0
-    if not pred_spec:
-        return {
-            "param_score": 0.0,
-            "param_feedback": "No parameters were generated. Please try again.",
+        # On failure, return minimal fallback
+        print(f"[GenerateFreeformCode] Failed to generate: {e}")
+        fallback_code = {
+            "description": text_desc[:100],
+            "code": f"import cadquery as cq\n\n# Failed to generate code: {e}\nresult = cq.Workplane('XY').box(10, 10, 10)",
+            "entry_point": "result",
+            "required_imports": ["cadquery as cq"],
+            "comments": f"Error during generation: {e}"
         }
-    
-    # Build prompt
-    prompt = JUDGE_PARAM_USER.format(
-        category=category,
-        gt_spec=json.dumps(gt_spec, indent=2),
-        pred_spec=json.dumps(pred_spec, indent=2),
-    )
-    
-    try:
-        result = client.generate_json(
-            prompt=prompt,
-            system_prompt=JUDGE_PARAM_SYSTEM,
-            temperature=0.2,
-            max_tokens=512,
-        )
-        
-        # Extract score and feedback
-        overall_score = float(result.get("overall_score", 0.0))
-        feedback = result.get("feedback", "")
-        
-        # Clamp score to [0, 1]
-        overall_score = max(0.0, min(1.0, overall_score))
-        
-    except Exception as e:
-        # On failure, use heuristic scoring
-        overall_score = _heuristic_param_score(gt_spec, pred_spec)
-        feedback = f"LLM judge failed ({e}), using heuristic score."
-    
-    return {
-        "param_score": overall_score,
-        "param_feedback": feedback,
-    }
-
-
-def _heuristic_param_score(gt_spec: dict | list, pred_spec: dict | list) -> float:
-    """Fallback heuristic scoring when LLM judge fails."""
-    if isinstance(gt_spec, list) and isinstance(pred_spec, list):
-        # Shaft format: array of [length, diameter] pairs
-        if len(gt_spec) != len(pred_spec):
-            return 0.3
-        scores = []
-        for gt_pair, pred_pair in zip(gt_spec, pred_spec):
-            if len(gt_pair) == 2 and len(pred_pair) == 2:
-                for gt_val, pred_val in zip(gt_pair, pred_pair):
-                    if gt_val == 0:
-                        scores.append(1.0 if pred_val == 0 else 0.0)
-                    else:
-                        diff = abs(gt_val - pred_val) / abs(gt_val)
-                        scores.append(max(0, 1 - diff))
-        return sum(scores) / len(scores) if scores else 0.0
-    
-    if isinstance(gt_spec, dict) and isinstance(pred_spec, dict):
-        # Dict format: compare each key
-        if not gt_spec:
-            return 0.0
-        scores = []
-        for key, gt_val in gt_spec.items():
-            if key not in pred_spec:
-                scores.append(0.0)
-                continue
-            pred_val = pred_spec[key]
-            if isinstance(gt_val, (int, float)) and isinstance(pred_val, (int, float)):
-                if gt_val == 0:
-                    scores.append(1.0 if pred_val == 0 else 0.0)
-                else:
-                    diff = abs(gt_val - pred_val) / abs(gt_val)
-                    scores.append(max(0, 1 - diff))
-            elif gt_val == pred_val:
-                scores.append(1.0)
-            else:
-                scores.append(0.0)
-        return sum(scores) / len(scores) if scores else 0.0
-    
-    return 0.0
+        return {"pred_param_spec": fallback_code}
 
 
 def generate_cad(state: AgentState) -> dict:
     """
-    GenerateCAD Node: Generate CAD model from parameters.
+    GenerateCAD Node: Generate CAD model from LLM-generated CadQuery code.
     
-    Uses CadQuery to generate STEP file and render PNG.
+    Executes the freeform code to create arbitrary geometric shapes.
     Falls back to stub paths if CadQuery is not available.
     """
-    from src.cad.generators import generate_and_export, is_cadquery_available
+    from src.cad.generators import generate_from_code, is_cadquery_available
+    from src.schemas import CadQueryCodeDesign
     
     sample_id = state["sample_id"]
-    category = state["category"]
     run_id = state["run_id"] or "default"
     iteration = state["iteration"]
     pred_param_spec = state.get("pred_param_spec")
@@ -470,8 +376,8 @@ def generate_cad(state: AgentState) -> dict:
     config = get_config()
     output_dir = f"{config.storage.artifacts_dir}/{run_id}"
     
-    # Check if we have predicted parameters
-    if not pred_param_spec:
+    # Check if we have generated code
+    if not pred_param_spec or not isinstance(pred_param_spec, dict) or "code" not in pred_param_spec:
         return {
             "cad_file": None,
             "render_image": None,
@@ -480,31 +386,42 @@ def generate_cad(state: AgentState) -> dict:
     # Check if CadQuery is available
     if not is_cadquery_available():
         # Return stub paths when CadQuery not available
-        cad_file = f"{output_dir}/cad/{sample_id}_iter{iteration}.step"
-        render_image = f"{output_dir}/renders/{sample_id}_iter{iteration}.png"
+        cad_file = f"{output_dir}/cad/{sample_id}_freeform_iter{iteration}.step"
+        render_image = f"{output_dir}/renders/{sample_id}_freeform_iter{iteration}.png"
         return {
             "cad_file": cad_file,
             "render_image": render_image,
         }
     
-    # Generate CAD model
-    result = generate_and_export(
-        category=category,
-        params=pred_param_spec,
-        output_dir=output_dir,
-        sample_id=sample_id,
-        iteration=iteration,
-        export_step=True,
-        render_png=True,
-    )
-    
-    if not result.success:
-        print(f"[GenerateCAD] Failed: {result.error_message}")
-    
-    return {
-        "cad_file": result.cad_file,
-        "render_image": result.render_image,
-    }
+    # Freeform code generation mode (only mode now)
+    try:
+        code_design = CadQueryCodeDesign(**pred_param_spec)
+        filename_prefix = f"{sample_id}_freeform_iter{iteration}"
+        
+        result = generate_from_code(
+            code_design=code_design,
+            output_dir=output_dir,
+            filename_prefix=filename_prefix,
+        )
+        
+        if not result.success:
+            print(f"[GenerateCAD] Failed: {result.error_message}")
+            return {
+                "cad_file": None,
+                "render_image": None,
+            }
+        
+        return {
+            "cad_file": result.cad_file,
+            "render_image": result.render_image,
+        }
+        
+    except Exception as e:
+        print(f"[GenerateCAD] Freeform mode failed: {e}")
+        return {
+            "cad_file": None,
+            "render_image": None,
+        }
 
 
 def judge_cad_vlm(state: AgentState) -> dict:

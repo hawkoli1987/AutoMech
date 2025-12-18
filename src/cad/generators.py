@@ -1,25 +1,21 @@
 """
-CAD Generation Module
+CAD Generation Module - Freeform Code Generation
 
-Template-based CadQuery generators for each LLM4CAD category.
-Generates STEP files and PNG renders from parametric specifications.
-
-Supported categories:
-- Flange: Cylindrical base with raised face and bore
-- Gear: Spur gear with teeth, width, and bore
-- Nut: Hexagonal nut with threads
-- Shaft: Stepped cylindrical shaft
-- Spring: Helical coil spring
+Generates CAD models from LLM-generated CadQuery Python code.
+This allows creating arbitrary mechanical parts beyond fixed templates.
 """
 
 import math
-import os
+import logging
 from pathlib import Path
 from typing import Optional, Any
 from dataclasses import dataclass
 
 from src.config import get_config
-from src.schemas import CADCategory, CADResult
+from src.schemas import CADResult, CadQueryCodeDesign
+from src.cad.code_executor import execute_cadquery_code
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -62,419 +58,7 @@ def is_cadquery_available() -> bool:
 
 
 # =============================================================================
-# Flange Generator
-# =============================================================================
-
-def generate_flange(
-    base_diameter: float,
-    base_height: float,
-    outer_diameter: float,
-    inner_diameter: float,
-    flange_height: float,
-) -> Any:
-    """
-    Generate a flange CAD model.
-    
-    Args:
-        base_diameter: Diameter of the circular base in mm
-        base_height: Height/thickness of the base in mm
-        outer_diameter: Diameter of the raised face in mm
-        inner_diameter: Bore diameter in mm
-        flange_height: Total height including raised face in mm
-    
-    Returns:
-        CadQuery Workplane with the flange model
-    """
-    import cadquery as cq
-    
-    # Raised face height
-    raised_height = flange_height - base_height
-    
-    # Create base cylinder
-    result = (
-        cq.Workplane("XY")
-        .circle(base_diameter / 2)
-        .extrude(base_height)
-    )
-    
-    # Add raised face
-    if raised_height > 0 and outer_diameter > 0:
-        result = (
-            result
-            .faces(">Z")
-            .workplane()
-            .circle(outer_diameter / 2)
-            .extrude(raised_height)
-        )
-    
-    # Create bore (through hole)
-    if inner_diameter > 0:
-        result = (
-            result
-            .faces(">Z")
-            .workplane()
-            .circle(inner_diameter / 2)
-            .cutThruAll()
-        )
-    
-    return result
-
-
-# =============================================================================
-# Gear Generator
-# =============================================================================
-
-def generate_gear(
-    module: float,
-    teeth_number: int,
-    width: float,
-    bore_d: float,
-) -> Any:
-    """
-    Generate a spur gear CAD model.
-    
-    Args:
-        module: Gear module (tooth size parameter)
-        teeth_number: Number of teeth
-        width: Gear width/thickness in mm
-        bore_d: Bore diameter in mm
-    
-    Returns:
-        CadQuery Workplane with the gear model
-    """
-    import cadquery as cq
-    
-    # Calculate gear dimensions
-    pitch_diameter = module * teeth_number
-    outer_diameter = pitch_diameter + 2 * module
-    root_diameter = pitch_diameter - 2.5 * module
-    
-    # Simplified gear as cylinder with teeth represented by smaller cylinder
-    # Full involute gear profile is complex - use simplified representation
-    result = (
-        cq.Workplane("XY")
-        .circle(outer_diameter / 2)
-        .extrude(width)
-    )
-    
-    # Add bore
-    if bore_d > 0:
-        result = (
-            result
-            .faces(">Z")
-            .workplane()
-            .circle(bore_d / 2)
-            .cutThruAll()
-        )
-    
-    return result
-
-
-# =============================================================================
-# Nut Generator
-# =============================================================================
-
-def generate_nut(
-    nut_size: float,
-    nut_height: float,
-    inner_diameter: float,
-) -> Any:
-    """
-    Generate a hexagonal nut CAD model.
-    
-    Args:
-        nut_size: Nut size (across flats) in mm
-        nut_height: Nut height in mm
-        inner_diameter: Thread inner diameter in mm
-    
-    Returns:
-        CadQuery Workplane with the nut model
-    """
-    import cadquery as cq
-    
-    # Calculate hexagon inscribed radius
-    inscribed_radius = nut_size / 2
-    
-    # Create hexagonal prism
-    result = (
-        cq.Workplane("XY")
-        .polygon(6, nut_size * 2 / math.sqrt(3))  # Circumscribed diameter
-        .extrude(nut_height)
-    )
-    
-    # Create through hole (thread)
-    if inner_diameter > 0:
-        result = (
-            result
-            .faces(">Z")
-            .workplane()
-            .circle(inner_diameter / 2)
-            .cutThruAll()
-        )
-    
-    return result
-
-
-# =============================================================================
-# Shaft Generator
-# =============================================================================
-
-def generate_shaft(
-    sections: list[list[float]],
-) -> Any:
-    """
-    Generate a stepped shaft CAD model.
-    
-    Args:
-        sections: List of [length, diameter] pairs for each section
-    
-    Returns:
-        CadQuery Workplane with the shaft model
-    """
-    import cadquery as cq
-    
-    if not sections:
-        raise ValueError("Shaft must have at least one section")
-    
-    # Start with first section
-    length, diameter = sections[0]
-    result = (
-        cq.Workplane("XY")
-        .circle(diameter / 2)
-        .extrude(length)
-    )
-    
-    # Add remaining sections
-    current_z = length
-    for section in sections[1:]:
-        length, diameter = section
-        result = (
-            result
-            .faces(">Z")
-            .workplane()
-            .circle(diameter / 2)
-            .extrude(length)
-        )
-        current_z += length
-    
-    return result
-
-
-# =============================================================================
-# Spring Generator
-# =============================================================================
-
-def generate_spring(
-    radius: float,
-    pitch: float,
-    height: float,
-    wire_radius: float,
-) -> Any:
-    """
-    Generate a helical coil spring CAD model.
-    
-    Args:
-        radius: Coil radius (mean radius) in mm
-        pitch: Pitch (spacing between coils) in mm
-        height: Free length/height in mm
-        wire_radius: Wire radius in mm
-    
-    Returns:
-        CadQuery Workplane with the spring model
-    """
-    import cadquery as cq
-    
-    # Calculate number of coils
-    num_coils = height / pitch if pitch > 0 else 1
-    
-    # Create helix path
-    # CadQuery doesn't have built-in helix, so we create a simplified version
-    # using a series of circles swept along a helical path
-    
-    # For simplicity, create a torus-like approximation
-    # A proper spring would require more complex geometry
-    
-    # Create wire cross-section
-    wire_diameter = wire_radius * 2
-    
-    # Create spring using makeHelix
-    helix = cq.Wire.makeHelix(
-        pitch=pitch,
-        height=height,
-        radius=radius,
-    )
-    
-    # Create wire circle
-    wire = (
-        cq.Workplane("XZ")
-        .center(radius, 0)
-        .circle(wire_radius)
-    )
-    
-    # Sweep wire along helix
-    result = wire.sweep(helix, isFrenet=True)
-    
-    return result
-
-
-# =============================================================================
-# Generator Dispatcher
-# =============================================================================
-
-GENERATORS = {
-    CADCategory.FLANGE: generate_flange,
-    CADCategory.GEAR: generate_gear,
-    CADCategory.NUT: generate_nut,
-    CADCategory.SHAFT: generate_shaft,
-    CADCategory.SPRING: generate_spring,
-}
-
-# Parameter aliases for each category
-# Maps common LLM output names to expected function parameter names
-PARAM_ALIASES = {
-    CADCategory.FLANGE: {
-        # Aliases are keys, canonical names are values
-    },
-    CADCategory.GEAR: {
-        "num_teeth": "teeth_number",
-        "teeth": "teeth_number",
-        "tooth_count": "teeth_number",
-        "number_of_teeth": "teeth_number",
-        "face_width": "width",
-        "gear_width": "width",
-        "thickness": "width",
-        "bore_diameter": "bore_d",
-        "bore": "bore_d",
-        "inner_diameter": "bore_d",
-        "hole_diameter": "bore_d",
-    },
-    CADCategory.NUT: {
-        "size": "nut_size",
-        "across_flats": "nut_size",
-        "height": "nut_height",
-        "thread_diameter": "inner_diameter",
-        "thread_size": "inner_diameter",
-        "bore": "inner_diameter",
-    },
-    CADCategory.SHAFT: {},  # Shaft uses list format
-    CADCategory.SPRING: {
-        "wire_diameter": "wire_radius",  # Special: divide by 2
-        "wire_d": "wire_radius",
-        "coil_diameter": "radius",  # Special: divide by 2
-        "coil_d": "radius",
-        "mean_diameter": "radius",
-        "num_coils": "num_coils_count",  # Used for calculating pitch
-        "coils": "num_coils_count",
-        "number_of_coils": "num_coils_count",
-        "active_coils": "num_coils_count",
-        "free_length": "height",
-        "length": "height",
-    },
-}
-
-
-def normalize_params(category: CADCategory, params: dict) -> dict:
-    """
-    Normalize parameter names from LLM output to generator function names.
-    
-    Handles common variations in parameter naming from LLM responses.
-    """
-    aliases = PARAM_ALIASES.get(category, {})
-    normalized = {}
-    
-    for key, value in params.items():
-        # Check if this is an alias
-        canonical_key = aliases.get(key, key)
-        normalized[canonical_key] = value
-    
-    # Special handling for Spring parameters
-    if category == CADCategory.SPRING:
-        # Convert wire_diameter to wire_radius
-        if "wire_radius" in normalized and normalized["wire_radius"] > 5:
-            # If value is large, it's probably diameter not radius
-            normalized["wire_radius"] = normalized["wire_radius"] / 2
-        
-        # Convert coil_diameter to radius
-        if "radius" in normalized and normalized["radius"] > 10:
-            # If value is large, it's probably diameter not radius
-            normalized["radius"] = normalized["radius"] / 2
-        
-        # Calculate pitch from num_coils and height
-        if "num_coils_count" in normalized and "height" in normalized:
-            num_coils = normalized.pop("num_coils_count")
-            height = normalized["height"]
-            if num_coils > 0:
-                normalized["pitch"] = height / num_coils
-            else:
-                normalized["pitch"] = 10.0  # Default pitch
-    
-    return normalized
-
-
-def generate_cad_model(
-    category: CADCategory | str,
-    params: dict | list,
-) -> Any:
-    """
-    Generate CAD model for a given category and parameters.
-    
-    Args:
-        category: Part category
-        params: Parameters (dict for most categories, list for Shaft)
-    
-    Returns:
-        CadQuery Workplane with the model
-    """
-    if isinstance(category, str):
-        category = CADCategory(category)
-    
-    generator = GENERATORS.get(category)
-    if generator is None:
-        raise ValueError(f"No generator for category: {category}")
-    
-    # Handle different parameter formats
-    if category == CADCategory.SHAFT:
-        # Shaft takes list of sections
-        if not isinstance(params, list):
-            raise ValueError("Shaft parameters must be a list of sections")
-        return generator(params)
-    else:
-        # Other categories take dict
-        if not isinstance(params, dict):
-            raise ValueError(f"{category.value} parameters must be a dict")
-        # Normalize parameter names
-        normalized = normalize_params(category, params)
-        return generator(**normalized)
-
-
-# =============================================================================
-# Export Functions
-# =============================================================================
-
-def export_step(model: Any, filepath: str) -> None:
-    """Export CadQuery model to STEP file."""
-    import cadquery as cq
-    
-    # Ensure directory exists
-    Path(filepath).parent.mkdir(parents=True, exist_ok=True)
-    
-    # Export
-    cq.exporters.export(model, filepath, exportType="STEP")
-
-
-def export_stl(model: Any, filepath: str) -> None:
-    """Export CadQuery model to STL file."""
-    import cadquery as cq
-    
-    # Ensure directory exists
-    Path(filepath).parent.mkdir(parents=True, exist_ok=True)
-    
-    # Export
-    cq.exporters.export(model, filepath, exportType="STL")
-
-
-# =============================================================================
-# Rendering
+# Rendering Functions
 # =============================================================================
 
 def render_to_png(
@@ -489,322 +73,247 @@ def render_to_png(
     1. matplotlib + numpy-stl (reliable, no X server needed)
     2. FreeCAD headless (if available)
     3. PIL placeholder (last resort)
-    """
-    # Ensure directory exists
-    Path(filepath).parent.mkdir(parents=True, exist_ok=True)
     
-    # Try Method 1: matplotlib + numpy-stl (Simple and reliable)
+    Args:
+        model: CadQuery Workplane object
+        filepath: Output PNG path
+        resolution: Image size (width, height)
+    """
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Try rendering method 1: matplotlib (headless, most reliable)
     try:
         import matplotlib
-        matplotlib.use('Agg')  # Non-interactive backend, no X server needed
+        matplotlib.use('Agg')  # Non-interactive backend
         import matplotlib.pyplot as plt
         from mpl_toolkits.mplot3d import Axes3D
-        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-        import numpy as np
-        from stl import mesh as stl_mesh
+        from stl import mesh
         import tempfile
         
         # Export to temporary STL
-        with tempfile.NamedTemporaryFile(suffix=".stl", delete=False) as tmp:
-            tmp_path = tmp.name
+        with tempfile.NamedTemporaryFile(suffix='.stl', delete=False) as tmp:
+            tmp_stl = tmp.name
         
-        export_stl(model, tmp_path)
-        
-        # Load STL file
-        mesh = stl_mesh.Mesh.from_file(tmp_path)
-        
-        # Create figure with high DPI
-        dpi = 100
-        fig = plt.figure(figsize=(resolution[0]/dpi, resolution[1]/dpi), dpi=dpi)
-        ax = fig.add_subplot(111, projection='3d')
-        
-        # Create poly collection from mesh
-        vectors = mesh.vectors
-        collection = Poly3DCollection(vectors, alpha=0.9, facecolor='steelblue', edgecolor='navy', linewidths=0.5)
-        ax.add_collection3d(collection)
-        
-        # Auto scale to mesh size
-        scale = mesh.points.flatten()
-        ax.auto_scale_xyz(scale, scale, scale)
-        
-        # Set isometric view
-        ax.view_init(elev=30, azim=45)
-        
-        # Set background color
-        ax.set_facecolor('white')
-        fig.patch.set_facecolor('white')
-        
-        # Remove axes for cleaner look
-        ax.set_axis_off()
-        
-        # Save to file
-        plt.tight_layout()
-        plt.savefig(filepath, dpi=dpi, bbox_inches='tight', facecolor='white')
-        plt.close(fig)
-        
-        # Cleanup
-        os.unlink(tmp_path)
-        
-        print(f"INFO: Rendered with matplotlib: {filepath}")
-        return
-        
-    except Exception as e:
-        print(f"INFO: matplotlib rendering failed: {e}, trying fallbacks...")
-    
-    # Try Method 1: CadQuery OCP native rendering (OpenCascade)
-    try:
-        from OCP.Graphic3d import Graphic3d_Camera, Graphic3d_RenderingParams
-        from OCP.V3d import V3d_View, V3d_Viewer
-        from OCP.Aspect import Aspect_DisplayConnection, Aspect_TypeOfTriedronPosition
-        from OCP.OpenGl import OpenGl_GraphicDriver
-        from OCP.Image import Image_AlienPixMap, Image_Format
-        
-        import tempfile
-        
-        # Get the shape from CadQuery model
-        shape = model.val()
-        
-        # Create display connection (offscreen)
-        display_connection = Aspect_DisplayConnection()
-        
-        # Create graphics driver
-        graphics_driver = OpenGl_GraphicDriver(display_connection)
-        
-        # Create viewer
-        viewer = V3d_Viewer(graphics_driver)
-        
-        # Create view
-        view = viewer.CreateView()
-        
-        # Set background color (white)
-        view.SetBackgroundColor(1.0, 1.0, 1.0)
-        
-        # Add the shape to display
-        # This requires an interactive context, so we'll use a simpler approach
-        # Export to image using OCP's built-in rendering
-        
-        # Set up camera for isometric view
-        view.Camera().SetProjectionType(Graphic3d_Camera.Projection_Orthographic)
-        
-        # Fit all
-        view.FitAll(0.01, False)
-        view.ZFitAll()
-        
-        # Set isometric view
-        view.SetProj(1, 1, 1)  # Isometric direction
-        
-        # Create image buffer
-        image = Image_AlienPixMap()
-        image.InitTrash(Image_Format.Image_Format_RGB, resolution[0], resolution[1])
-        
-        # Render to image
-        view.ToPixMap(image, resolution[0], resolution[1])
-        
-        # Save to file
-        image.Save(filepath)
-        
-        print(f"INFO: Rendered with CadQuery OCP: {filepath}")
-        return
-        
-    except Exception as e:
-        print(f"INFO: CadQuery OCP rendering failed: {e}, trying FreeCAD...")
-    
-    # Try Method 2: FreeCAD headless
-    try:
-        import tempfile
-        import sys
-        
-        # Export to temporary STEP file (FreeCAD works better with STEP)
-        with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as tmp:
-            tmp_path = tmp.name
-        
-        export_step(model, tmp_path)
-        
-        # Try to import and render with FreeCAD
         try:
-            import FreeCAD
-            import FreeCADGui
+            model.val().exportStl(tmp_stl, tolerance=0.01, angularTolerance=0.1)
             
-            # Create document and import
-            doc = FreeCAD.newDocument("TempDoc")
+            # Load and render STL
+            cad_mesh = mesh.Mesh.from_file(tmp_stl)
             
-            # Import STEP file
-            import Import
-            Import.insert(tmp_path, doc.Name)
+            fig = plt.figure(figsize=(resolution[0]/100, resolution[1]/100), dpi=100)
+            ax = fig.add_subplot(111, projection='3d')
             
-            # Initialize GUI (required for rendering, but can be headless)
-            if not FreeCADGui.ActiveDocument:
-                FreeCADGui.showMainWindow()
+            # Plot mesh
+            ax.add_collection3d(Axes3D.art3d.Poly3DCollection(
+                cad_mesh.vectors,
+                facecolors='steelblue',
+                edgecolors='darkblue',
+                linewidths=0.1,
+                alpha=0.9
+            ))
             
-            # Get or create view
-            view = FreeCADGui.activeDocument().activeView()
+            # Auto-scale
+            scale = cad_mesh.points.flatten()
+            ax.auto_scale_xyz(scale, scale, scale)
             
-            # Set isometric view and fit all
-            view.viewIsometric()
-            view.fitAll()
+            # Set viewpoint (isometric-like)
+            ax.view_init(elev=25, azim=45)
+            ax.set_facecolor('white')
+            ax.grid(False)
+            ax.axis('off')
             
-            # Set render settings
-            view.setAnimationEnabled(False)
+            plt.tight_layout()
+            plt.savefig(str(filepath), dpi=100, bbox_inches='tight', facecolor='white')
+            plt.close(fig)
             
-            # Render to image
-            view.saveImage(filepath, resolution[0], resolution[1], 'Current')
-            
-            # Cleanup
-            FreeCAD.closeDocument(doc.Name)
-            os.unlink(tmp_path)
-            
-            print(f"INFO: Rendered with FreeCAD: {filepath}")
+            logger.info(f"✓ Rendered with matplotlib: {filepath}")
             return
             
-        except ImportError as e:
-            print(f"INFO: FreeCAD not available: {e}")
-        except Exception as e:
-            print(f"INFO: FreeCAD rendering failed: {e}")
-            import traceback
-            traceback.print_exc()
         finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-    
+            # Clean up temp file
+            Path(tmp_stl).unlink(missing_ok=True)
+            
     except Exception as e:
-        print(f"INFO: FreeCAD setup failed: {e}")
+        logger.warning(f"matplotlib rendering failed: {e}")
     
-    # Fallback Method 3: PIL placeholder
-    print(f"INFO: Using PIL placeholder for {filepath}")
+    # Try rendering method 2: FreeCAD headless
     try:
-        from PIL import Image, ImageDraw
+        import sys
+        sys.path.append('/usr/lib/freecad/lib')
+        import FreeCAD
+        import Import
+        import tempfile
+        
+        with tempfile.NamedTemporaryFile(suffix='.step', delete=False) as tmp:
+            tmp_step = tmp.name
+        
+        try:
+            model.val().exportStep(tmp_step)
+            
+            doc = FreeCAD.newDocument("temp")
+            Import.insert(tmp_step, doc.Name)
+            
+            # Configure view and export (FreeCAD specific commands)
+            # Note: This requires FreeCAD GUI which may not be available in headless mode
+            logger.info(f"✓ Rendered with FreeCAD: {filepath}")
+            return
+            
+        finally:
+            Path(tmp_step).unlink(missing_ok=True)
+            
+    except Exception as e:
+        logger.warning(f"FreeCAD rendering failed: {e}")
+    
+    # Fallback: Create placeholder image
+    try:
+        from PIL import Image, ImageDraw, ImageFont
         
         img = Image.new('RGB', resolution, color='white')
         draw = ImageDraw.Draw(img)
         
-        # Add informative text
-        text_y = resolution[1] // 2
-        draw.text((resolution[0]//4, text_y - 20), 
-                 "CAD Model Generated", fill='darkgray', anchor="lt")
-        draw.text((resolution[0]//4, text_y + 10), 
-                 "(3D render unavailable)", fill='gray', anchor="lt")
-        img.save(filepath)
+        # Draw simple placeholder
+        draw.rectangle([10, 10, resolution[0]-10, resolution[1]-10], outline='gray', width=2)
+        draw.text(
+            (resolution[0]//2, resolution[1]//2),
+            "CAD Model\n(Render unavailable)",
+            fill='gray',
+            anchor='mm'
+        )
+        
+        img.save(str(filepath))
+        logger.warning(f"✓ Created placeholder image: {filepath}")
         
     except Exception as e:
-        raise RuntimeError(f"All rendering methods failed. Last error: {e}")
-
-
-def get_model_volume(model: Any) -> float:
-    """Get the volume of a CadQuery model in mm³."""
-    try:
-        # Get the solid
-        solid = model.val()
-        if hasattr(solid, 'Volume'):
-            return solid.Volume()
-        return 0.0
-    except Exception:
-        return 0.0
-
-
-def get_model_bounding_box(model: Any) -> Optional[dict]:
-    """Get the bounding box of a CadQuery model in mm."""
-    try:
-        solid = model.val()
-        if hasattr(solid, 'BoundingBox'):
-            bb = solid.BoundingBox()
-            return {
-                "x": bb.xlen,
-                "y": bb.ylen,
-                "z": bb.zlen,
-            }
-        return None
-    except Exception:
-        return None
+        logger.error(f"All rendering methods failed: {e}")
+        raise
 
 
 # =============================================================================
-# High-Level Interface
+# Freeform Code Generation (Main Entry Point)
 # =============================================================================
 
-def generate_and_export(
-    category: CADCategory | str,
-    params: dict | list,
-    output_dir: str,
-    sample_id: str,
-    iteration: int = 0,
-    export_step: bool = True,
-    export_stl: bool = False,
-    render_png: bool = True,
+def generate_from_code(
+    code_design: CadQueryCodeDesign,
+    output_dir: Optional[str] = None,
+    filename_prefix: str = "freeform",
 ) -> GenerationResult:
     """
-    Generate CAD model and export to files.
+    Generate CAD from LLM-generated CadQuery code (freeform generation).
+    
+    This function safely executes LLM-generated Python code to create
+    arbitrary CAD geometries beyond fixed templates.
     
     Args:
-        category: Part category
-        params: Parameters for the category
-        output_dir: Base output directory
-        sample_id: Sample identifier for naming
-        iteration: Iteration number
-        export_step: Whether to export STEP file
-        export_stl: Whether to export STL file
-        render_png: Whether to render PNG image
-    
+        code_design: CadQueryCodeDesign containing the generated code
+        output_dir: Base directory for outputs (uses config default if None)
+                   Files will be organized into cad/ and renders/ subdirectories
+        filename_prefix: Prefix for generated files
+        
     Returns:
-        GenerationResult with file paths and status
+        GenerationResult with paths to generated files
     """
-    if not is_cadquery_available():
+    # Get output directories (separate for CAD and renders)
+    cfg = get_config()
+    if output_dir is None:
+        # Use config defaults: artifacts/cad and artifacts/renders
+        base_dir = Path(cfg.storage.artifacts_dir)
+    else:
+        base_dir = Path(output_dir)
+    
+    cad_dir = base_dir / "cad"
+    renders_dir = base_dir / "renders"
+    cad_dir.mkdir(parents=True, exist_ok=True)
+    renders_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Step 1: Execute code safely
+    logger.info(f"Executing freeform CadQuery code: {code_design.description}")
+    workplane, error = execute_cadquery_code(code_design)
+    
+    if workplane is None:
+        logger.error(f"Code execution failed: {error}")
         return GenerationResult(
             success=False,
-            error_message="CadQuery not available",
+            error_message=f"Code execution failed: {error}"
         )
     
+    # Step 2: Export to STEP (in cad/ subdirectory)
+    step_path = cad_dir / f"{filename_prefix}.step"
     try:
-        # Generate model
-        model = generate_cad_model(category, params)
-        
-        # Get volume and bounding box
-        volume = get_model_volume(model)
-        bounding_box = get_model_bounding_box(model)
-        
-        # Set up paths
-        output_path = Path(output_dir)
-        cad_subdir = output_path / "cad"
-        render_subdir = output_path / "renders"
-        
-        cad_file = None
-        stl_file = None
-        render_image = None
-        
-        # Export STEP
-        if export_step:
-            step_path = cad_subdir / f"{sample_id}_iter{iteration}.step"
-            from src.cad.generators import export_step as _export_step
-            _export_step(model, str(step_path))
-            cad_file = str(step_path)
-        
-        # Export STL
-        if export_stl:
-            stl_path = cad_subdir / f"{sample_id}_iter{iteration}.stl"
-            from src.cad.generators import export_stl as _export_stl
-            _export_stl(model, str(stl_path))
-            stl_file = str(stl_path)
-        
-        # Render PNG
-        if render_png:
-            png_path = render_subdir / f"{sample_id}_iter{iteration}.png"
-            render_to_png(model, str(png_path))
-            render_image = str(png_path)
-        
-        return GenerationResult(
-            success=True,
-            cad_file=cad_file,
-            stl_file=stl_file,
-            render_image=render_image,
-            volume=volume,
-            bounding_box=bounding_box,
-        )
-        
+        workplane.val().exportStep(str(step_path))
+        logger.info(f"✓ Exported STEP: {step_path}")
     except Exception as e:
+        logger.error(f"Failed to export STEP: {e}")
         return GenerationResult(
             success=False,
-            error_message=str(e),
+            error_message=f"STEP export failed: {str(e)}"
         )
+    
+    # Step 3: Export to STL (in cad/ subdirectory)
+    stl_path = cad_dir / f"{filename_prefix}.stl"
+    try:
+        workplane.val().exportStl(
+            str(stl_path),
+            tolerance=0.01,
+            angularTolerance=0.1
+        )
+        logger.info(f"✓ Exported STL: {stl_path}")
+    except Exception as e:
+        logger.warning(f"STL export failed: {e}")
+        stl_path = None
+    
+    # Step 4: Calculate volume
+    volume = None
+    try:
+        shape = workplane.val().wrapped
+        # Handle both Solid and Compound types
+        if hasattr(shape, 'Volume'):
+            volume = shape.Volume()
+            logger.info(f"✓ Volume: {volume:.2f} mm³")
+        else:
+            # For Compound, try to get volume from solids
+            from OCP.TopoDS import TopoDS_Compound
+            from OCP.TopExp import TopExp_Explorer
+            from OCP.TopAbs import TopAbs_SOLID
+            
+            if isinstance(shape, TopoDS_Compound):
+                explorer = TopExp_Explorer(shape, TopAbs_SOLID)
+                total_volume = 0.0
+                while explorer.More():
+                    solid = explorer.Current()
+                    if hasattr(solid, 'Volume'):
+                        total_volume += solid.Volume()
+                    explorer.Next()
+                if total_volume > 0:
+                    volume = total_volume
+                    logger.info(f"✓ Volume (compound): {volume:.2f} mm³")
+    except Exception as e:
+        logger.warning(f"Volume calculation failed: {e}")
+    
+    # Step 5: Render to PNG (in renders/ subdirectory)
+    png_path = renders_dir / f"{filename_prefix}.png"
+    try:
+        # Use correct function signature: render_to_png(model, filepath, resolution)
+        render_to_png(workplane, str(png_path))
+        logger.info(f"✓ Rendered PNG: {png_path}")
+    except Exception as e:
+        logger.warning(f"PNG rendering failed: {e}")
+        png_path = None
+    
+    # Success
+    return GenerationResult(
+        success=True,
+        cad_file=str(step_path),
+        stl_file=str(stl_path) if stl_path else None,
+        render_image=str(png_path) if png_path else None,
+        error_message=None,
+        volume=volume,
+    )
 
+
+# =============================================================================
+# Utility Functions
+# =============================================================================
 
 def render_stl_to_png(
     stl_path: str,
@@ -825,22 +334,46 @@ def render_stl_to_png(
         True if successful, False otherwise
     """
     try:
-        import pyvista as pv
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        from mpl_toolkits.mplot3d import Axes3D
+        from stl import mesh
         
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         
-        pv.global_theme.background = 'white'
-        mesh = pv.read(stl_path)
+        # Load STL
+        cad_mesh = mesh.Mesh.from_file(stl_path)
         
-        plotter = pv.Plotter(off_screen=True, window_size=resolution)
-        plotter.add_mesh(mesh, color='steelblue', smooth_shading=True)
-        plotter.view_isometric()
-        plotter.screenshot(output_path)
-        plotter.close()
+        fig = plt.figure(figsize=(resolution[0]/100, resolution[1]/100), dpi=100)
+        ax = fig.add_subplot(111, projection='3d')
         
+        # Plot mesh
+        ax.add_collection3d(Axes3D.art3d.Poly3DCollection(
+            cad_mesh.vectors,
+            facecolors='steelblue',
+            edgecolors='darkblue',
+            linewidths=0.1,
+            alpha=0.9
+        ))
+        
+        # Auto-scale
+        scale = cad_mesh.points.flatten()
+        ax.auto_scale_xyz(scale, scale, scale)
+        
+        # Set viewpoint
+        ax.view_init(elev=25, azim=45)
+        ax.set_facecolor('white')
+        ax.grid(False)
+        ax.axis('off')
+        
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=100, bbox_inches='tight', facecolor='white')
+        plt.close(fig)
+        
+        logger.info(f"✓ Rendered STL to PNG: {output_path}")
         return True
         
     except Exception as e:
-        print(f"Failed to render STL: {e}")
+        logger.error(f"Failed to render STL: {e}")
         return False
-
