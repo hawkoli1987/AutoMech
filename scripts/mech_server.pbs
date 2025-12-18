@@ -3,7 +3,7 @@
 #PBS -o /dev/null
 #PBS -e /dev/null
 #PBS -q AISG_debug
-#PBS -l select=1:mem=1000gb:ngpus=2:ncpus=100:host=hopper-45
+#PBS -l select=1:mem=1000gb:ngpus=2:ncpus=60:host=hopper-43
 #PBS -l walltime=24:00:00
 
 set -e
