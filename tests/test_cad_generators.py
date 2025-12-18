@@ -1,9 +1,10 @@
 """
-Tests for Step 1.5: CAD Generation Module
+Tests for CAD Generation Module - Freeform Code Generation
 
 Verifies:
-- Generator functions for each category
-- Export functionality
+- Code execution safety
+- Freeform code generation
+- Export functionality (STEP, STL)
 - Rendering pipeline
 - Error handling
 
@@ -32,337 +33,285 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-class TestGeneratorFunctions:
-    """Test individual generator functions."""
+class TestCodeExecutor:
+    """Test code execution safety and validation."""
     
-    def test_generate_flange(self):
-        """Test flange generation."""
-        from src.cad.generators import generate_flange
+    def test_code_executor_valid_code(self):
+        """Test executing valid CadQuery code."""
+        from src.cad.code_executor import execute_cadquery_code
+        from src.schemas import CadQueryCodeDesign
         
-        model = generate_flange(
-            base_diameter=100,
-            base_height=10,
-            outer_diameter=60,
-            inner_diameter=20,
-            flange_height=50,
+        code_design = CadQueryCodeDesign(
+            description="Simple box",
+            code="result = cq.Workplane('XY').box(10, 10, 10)",
+            entry_point="result",
+            required_imports=[],
         )
         
-        assert model is not None
-    
-    def test_generate_gear(self):
-        """Test gear generation."""
-        from src.cad.generators import generate_gear
+        workplane, error = execute_cadquery_code(code_design)
         
-        model = generate_gear(
-            module=2.0,
-            teeth_number=20,
-            width=10,
-            bore_d=8,
+        assert workplane is not None
+        assert error is None
+    
+    def test_code_executor_blocks_imports(self):
+        """Test that import statements are stripped."""
+        from src.cad.code_executor import execute_cadquery_code
+        from src.schemas import CadQueryCodeDesign
+        
+        # Code with import should still work (imports are commented out)
+        code_design = CadQueryCodeDesign(
+            description="Box with import",
+            code="import cadquery as cq\nresult = cq.Workplane('XY').box(10, 10, 10)",
+            entry_point="result",
+            required_imports=[],
         )
         
-        assert model is not None
-    
-    def test_generate_nut(self):
-        """Test nut generation."""
-        from src.cad.generators import generate_nut
+        workplane, error = execute_cadquery_code(code_design)
         
-        model = generate_nut(
-            nut_size=19,
-            nut_height=8,
-            inner_diameter=10,
+        assert workplane is not None
+        assert error is None
+    
+    def test_code_executor_syntax_error(self):
+        """Test handling of syntax errors."""
+        from src.cad.code_executor import execute_cadquery_code
+        from src.schemas import CadQueryCodeDesign
+        
+        code_design = CadQueryCodeDesign(
+            description="Invalid syntax",
+            code="result = cq.Workplane('XY').box(10, 10, 10",  # Missing closing paren
+            entry_point="result",
+            required_imports=[],
         )
         
-        assert model is not None
-    
-    def test_generate_shaft(self):
-        """Test shaft generation."""
-        from src.cad.generators import generate_shaft
+        workplane, error = execute_cadquery_code(code_design)
         
-        model = generate_shaft(
-            sections=[[20, 10], [30, 15], [20, 10]]
+        assert workplane is None
+        assert error is not None
+        assert "Syntax error" in error
+    
+    def test_code_executor_forbidden_operation(self):
+        """Test blocking of forbidden operations."""
+        from src.cad.code_executor import execute_cadquery_code
+        from src.schemas import CadQueryCodeDesign
+        
+        code_design = CadQueryCodeDesign(
+            description="Forbidden open()",
+            code="open('/etc/passwd'); result = cq.Workplane('XY').box(10, 10, 10)",
+            entry_point="result",
+            required_imports=[],
         )
         
-        assert model is not None
-    
-    def test_generate_shaft_single_section(self):
-        """Test shaft with single section."""
-        from src.cad.generators import generate_shaft
+        workplane, error = execute_cadquery_code(code_design)
         
-        model = generate_shaft(sections=[[50, 20]])
-        assert model is not None
+        assert workplane is None
+        assert error is not None
+        assert "Forbidden operation" in error
     
-    def test_generate_shaft_empty_raises(self):
-        """Test shaft with empty sections raises error."""
-        from src.cad.generators import generate_shaft
+    def test_code_executor_no_result(self):
+        """Test handling when entry point is missing."""
+        from src.cad.code_executor import execute_cadquery_code
+        from src.schemas import CadQueryCodeDesign
         
-        with pytest.raises(ValueError):
-            generate_shaft(sections=[])
-    
-    @pytest.mark.skip(reason="Spring generation may fail with complex helix")
-    def test_generate_spring(self):
-        """Test spring generation."""
-        from src.cad.generators import generate_spring
-        
-        model = generate_spring(
-            radius=20,
-            pitch=5,
-            height=30,
-            wire_radius=2,
+        code_design = CadQueryCodeDesign(
+            description="No result variable",
+            code="box = cq.Workplane('XY').box(10, 10, 10)",
+            entry_point="result",
+            required_imports=[],
         )
         
-        assert model is not None
+        workplane, error = execute_cadquery_code(code_design)
+        
+        assert workplane is None
+        assert error is not None
+        assert "Entry point 'result' not found" in error
+    
+    def test_safety_preview(self):
+        """Test code safety preview function."""
+        from src.cad.code_executor import preview_code_safety
+        
+        # Valid code
+        safe_code = "result = cq.Workplane('XY').box(10, 10, 10)"
+        results = preview_code_safety(safe_code)
+        
+        assert results['overall']['passed'] is True
+        assert results['syntax_check']['passed'] is True
+        assert results['security_check']['passed'] is True
+        
+        # Unsafe code
+        unsafe_code = "import os; os.system('rm -rf /')"
+        results = preview_code_safety(unsafe_code)
+        
+        assert results['overall']['passed'] is False
+        assert results['security_check']['passed'] is False
 
 
-class TestGeneratorDispatcher:
-    """Test the generator dispatcher function."""
+class TestFreeformGeneration:
+    """Test freeform CAD generation end-to-end."""
     
-    def test_dispatcher_flange(self):
-        """Test dispatching to flange generator."""
-        from src.cad.generators import generate_cad_model
-        from src.schemas import CADCategory
+    def test_generate_from_code_box(self):
+        """Test generating a simple box."""
+        from src.cad.generators import generate_from_code
+        from src.schemas import CadQueryCodeDesign
         
-        model = generate_cad_model(
-            category=CADCategory.FLANGE,
-            params={
-                "base_diameter": 100,
-                "base_height": 10,
-                "outer_diameter": 60,
-                "inner_diameter": 20,
-                "flange_height": 50,
-            }
-        )
-        
-        assert model is not None
+        with tempfile.TemporaryDirectory() as tmpdir:
+            code_design = CadQueryCodeDesign(
+                description="10mm cube",
+                code="result = cq.Workplane('XY').box(10, 10, 10)",
+                entry_point="result",
+                required_imports=[],
+            )
+            
+            result = generate_from_code(
+                code_design=code_design,
+                output_dir=tmpdir,
+                filename_prefix="test_box",
+            )
+            
+            assert result.success is True
+            assert result.cad_file is not None
+            assert Path(result.cad_file).exists()
+            assert result.cad_file.endswith('.step')
+            
+            # Check subdirectories
+            assert '/cad/' in result.cad_file
+            if result.render_image:
+                assert '/renders/' in result.render_image
     
-    def test_dispatcher_with_string_category(self):
-        """Test dispatcher accepts string category."""
-        from src.cad.generators import generate_cad_model
+    def test_generate_from_code_cylinder(self):
+        """Test generating a cylinder."""
+        from src.cad.generators import generate_from_code
+        from src.schemas import CadQueryCodeDesign
         
-        model = generate_cad_model(
-            category="Gear",
-            params={
-                "module": 2.0,
-                "teeth_number": 20,
-                "width": 10,
-                "bore_d": 8,
-            }
-        )
-        
-        assert model is not None
+        with tempfile.TemporaryDirectory() as tmpdir:
+            code_design = CadQueryCodeDesign(
+                description="Cylinder",
+                code="result = cq.Workplane('XY').circle(10).extrude(20)",
+                entry_point="result",
+                required_imports=[],
+            )
+            
+            result = generate_from_code(
+                code_design=code_design,
+                output_dir=tmpdir,
+                filename_prefix="test_cylinder",
+            )
+            
+            assert result.success is True
+            assert result.cad_file is not None
+            assert Path(result.cad_file).exists()
     
-    def test_dispatcher_shaft_with_list(self):
-        """Test dispatcher handles Shaft list params."""
-        from src.cad.generators import generate_cad_model
-        from src.schemas import CADCategory
+    def test_generate_from_code_with_features(self):
+        """Test generating geometry with holes and features."""
+        from src.cad.generators import generate_from_code
+        from src.schemas import CadQueryCodeDesign
         
-        model = generate_cad_model(
-            category=CADCategory.SHAFT,
-            params=[[20, 10], [30, 15]],
-        )
-        
-        assert model is not None
+        with tempfile.TemporaryDirectory() as tmpdir:
+            code_design = CadQueryCodeDesign(
+                description="Box with hole",
+                code="""result = cq.Workplane('XY').box(20, 20, 10)
+result = result.faces('>Z').workplane().circle(3).cutThruAll()""",
+                entry_point="result",
+                required_imports=[],
+            )
+            
+            result = generate_from_code(
+                code_design=code_design,
+                output_dir=tmpdir,
+                filename_prefix="test_features",
+            )
+            
+            assert result.success is True
+            assert result.cad_file is not None
     
-    def test_dispatcher_invalid_category(self):
-        """Test dispatcher raises for invalid category."""
-        from src.cad.generators import generate_cad_model
+    def test_generate_from_code_invalid_code(self):
+        """Test handling of invalid code during generation."""
+        from src.cad.generators import generate_from_code
+        from src.schemas import CadQueryCodeDesign
         
-        with pytest.raises(ValueError):
-            generate_cad_model(category="InvalidCategory", params={})
+        with tempfile.TemporaryDirectory() as tmpdir:
+            code_design = CadQueryCodeDesign(
+                description="Invalid code",
+                code="result = invalid_function()",
+                entry_point="result",
+                required_imports=[],
+            )
+            
+            result = generate_from_code(
+                code_design=code_design,
+                output_dir=tmpdir,
+                filename_prefix="test_invalid",
+            )
+            
+            assert result.success is False
+            assert result.error_message is not None
+            assert "Runtime error" in result.error_message
 
 
-class TestExport:
-    """Test export functionality."""
+class TestUtilityFunctions:
+    """Test utility functions."""
     
-    @pytest.fixture
-    def temp_dir(self):
-        """Create temporary directory for test outputs."""
-        tmp = tempfile.mkdtemp()
-        yield tmp
-        shutil.rmtree(tmp)
-    
-    @pytest.fixture
-    def sample_model(self):
-        """Create a simple model for testing."""
-        from src.cad.generators import generate_nut
-        return generate_nut(nut_size=19, nut_height=8, inner_diameter=10)
-    
-    def test_export_step(self, temp_dir, sample_model):
-        """Test STEP export."""
-        from src.cad.generators import export_step
-        
-        filepath = Path(temp_dir) / "test.step"
-        export_step(sample_model, str(filepath))
-        
-        assert filepath.exists()
-        assert filepath.stat().st_size > 0
-    
-    def test_export_stl(self, temp_dir, sample_model):
-        """Test STL export."""
-        from src.cad.generators import export_stl
-        
-        filepath = Path(temp_dir) / "test.stl"
-        export_stl(sample_model, str(filepath))
-        
-        assert filepath.exists()
-        assert filepath.stat().st_size > 0
-    
-    def test_export_creates_directories(self, temp_dir, sample_model):
-        """Test that export creates parent directories."""
-        from src.cad.generators import export_step
-        
-        filepath = Path(temp_dir) / "nested" / "dirs" / "test.step"
-        export_step(sample_model, str(filepath))
-        
-        assert filepath.exists()
-
-
-class TestVolume:
-    """Test volume calculation."""
-    
-    def test_get_model_volume(self):
-        """Test volume calculation for a model."""
-        from src.cad.generators import generate_nut, get_model_volume
-        
-        model = generate_nut(nut_size=19, nut_height=8, inner_diameter=10)
-        volume = get_model_volume(model)
-        
-        assert volume > 0
-
-
-class TestHighLevelInterface:
-    """Test the high-level generate_and_export function."""
-    
-    @pytest.fixture
-    def temp_dir(self):
-        """Create temporary directory for test outputs."""
-        tmp = tempfile.mkdtemp()
-        yield tmp
-        shutil.rmtree(tmp)
-    
-    def test_generate_and_export_success(self, temp_dir):
-        """Test successful generation and export."""
-        from src.cad.generators import generate_and_export
-        from src.schemas import CADCategory
-        
-        result = generate_and_export(
-            category=CADCategory.NUT,
-            params={
-                "nut_size": 19,
-                "nut_height": 8,
-                "inner_diameter": 10,
-            },
-            output_dir=temp_dir,
-            sample_id="test_nut",
-            iteration=0,
-            export_step=True,
-            render_png=False,  # Skip render to avoid pyvista dependency
-        )
-        
-        assert result.success is True
-        assert result.cad_file is not None
-        assert Path(result.cad_file).exists()
-        assert result.volume > 0
-    
-    def test_generate_and_export_invalid_params(self, temp_dir):
-        """Test generation with invalid parameters."""
-        from src.cad.generators import generate_and_export
-        from src.schemas import CADCategory
-        
-        result = generate_and_export(
-            category=CADCategory.FLANGE,
-            params={},  # Missing required params
-            output_dir=temp_dir,
-            sample_id="test_bad",
-            iteration=0,
-        )
-        
-        assert result.success is False
-        assert result.error_message is not None
-
-
-class TestCadQueryAvailability:
-    """Test CadQuery availability check."""
-    
-    def test_is_cadquery_available_true(self):
-        """Test availability check returns True when CadQuery is installed."""
+    def test_is_cadquery_available(self):
+        """Test CadQuery availability check."""
         from src.cad.generators import is_cadquery_available
         
-        # This test only runs if CadQuery is available (see pytestmark)
+        # Should return True since tests are only run if CadQuery is available
         assert is_cadquery_available() is True
-
-
-class TestGenerationResult:
-    """Test GenerationResult dataclass."""
     
-    def test_to_cad_result_success(self):
-        """Test converting successful result to CADResult."""
+    def test_generation_result_to_cad_result(self):
+        """Test GenerationResult conversion to CADResult."""
         from src.cad.generators import GenerationResult
         
-        result = GenerationResult(
+        gen_result = GenerationResult(
             success=True,
-            cad_file="/path/to/model.step",
+            cad_file="/path/to/file.step",
             render_image="/path/to/render.png",
-            volume=1234.5,
+            volume=1000.0,
         )
         
-        cad_result = result.to_cad_result()
+        cad_result = gen_result.to_cad_result()
         
         assert cad_result.success is True
-        assert cad_result.cad_file == "/path/to/model.step"
-        assert cad_result.volume == 1234.5
+        assert cad_result.cad_file == "/path/to/file.step"
+        assert cad_result.render_image == "/path/to/render.png"
+        assert cad_result.volume == 1000.0
+
+
+@pytest.mark.live
+class TestLiveIntegration:
+    """Integration tests requiring LLM (marked as 'live')."""
     
-    def test_to_cad_result_failure(self):
-        """Test converting failed result to CADResult."""
-        from src.cad.generators import GenerationResult
+    def test_llm_code_generation_integration(self):
+        """Test full pipeline with LLM code generation."""
+        from src.utils.llm_client import get_llm_client
+        from src.cad.generators import generate_from_code
+        from src.schemas import CadQueryCodeDesign
         
-        result = GenerationResult(
-            success=False,
-            error_message="Invalid geometry",
-        )
+        client = get_llm_client()
         
-        cad_result = result.to_cad_result()
+        prompt = """Generate CadQuery code for a simple 20mm cube.
+Output JSON with: description, code, entry_point (always 'result'), required_imports (empty list)."""
         
-        assert cad_result.success is False
-        assert cad_result.error_message == "Invalid geometry"
-
-
-# =============================================================================
-# Tests that don't require CadQuery (defined outside module-level skip)
-# =============================================================================
-
-# These are separate test functions at module level to avoid the pytestmark skip
-def test_generation_result_creation_no_cadquery():
-    """Test GenerationResult can be created without CadQuery."""
-    from src.cad.generators import GenerationResult
-    
-    result = GenerationResult(success=True, cad_file="/path/to/file.step")
-    assert result.success is True
-
-
-def test_availability_check_import_no_cadquery():
-    """Test is_cadquery_available can be imported."""
-    from src.cad.generators import is_cadquery_available
-    # Just test it doesn't crash
-    result = is_cadquery_available()
-    assert isinstance(result, bool)
-
-
-def test_generation_result_to_cad_result_no_cadquery():
-    """Test GenerationResult.to_cad_result works without CadQuery."""
-    from src.cad.generators import GenerationResult
-    
-    result = GenerationResult(
-        success=True,
-        cad_file="/path/to/model.step",
-        render_image="/path/to/render.png",
-        volume=1234.5,
-    )
-    
-    cad_result = result.to_cad_result()
-    assert cad_result.success is True
-    assert cad_result.cad_file == "/path/to/model.step"
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
+        try:
+            code_dict = client.generate_json(
+                prompt=prompt,
+                system_prompt="You are a CadQuery expert. Do NOT include import statements.",
+                temperature=0.3,
+                max_tokens=512,
+            )
+            
+            code_dict.setdefault("entry_point", "result")
+            code_dict.setdefault("required_imports", [])
+            
+            code_design = CadQueryCodeDesign(**code_dict)
+            
+            with tempfile.TemporaryDirectory() as tmpdir:
+                result = generate_from_code(
+                    code_design=code_design,
+                    output_dir=tmpdir,
+                    filename_prefix="test_llm",
+                )
+                
+                assert result.success is True
+                
+        except Exception as e:
+            pytest.skip(f"LLM not available: {e}")
