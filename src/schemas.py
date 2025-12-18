@@ -73,6 +73,26 @@ ParamSpec = FlangeSpec | GearSpec | NutSpec | ShaftSpec | SpringSpec
 
 
 # =============================================================================
+# Freeform Code Generation (Proposal 2)
+# =============================================================================
+
+class CadQueryCodeDesign(BaseModel):
+    """
+    Freeform CAD design using generated CadQuery Python code.
+    
+    This allows LLM to generate arbitrary shapes beyond fixed templates.
+    """
+    description: str = Field(..., description="Human-readable description of the design intent")
+    code: str = Field(..., description="Valid Python code using CadQuery API")
+    entry_point: str = Field(default="result", description="Variable name containing the final CadQuery Workplane")
+    required_imports: list[str] = Field(
+        default_factory=lambda: ["cadquery as cq"],
+        description="Python imports required by the code"
+    )
+    comments: Optional[str] = Field(None, description="Additional design notes or rationale")
+
+
+# =============================================================================
 # Judge Results
 # =============================================================================
 
